@@ -1,0 +1,178 @@
+Subject: [PATCH] sunxi: h616: FEL-mode eMMC bootloader installer (Wudung W01 / Tanix TX1)
+
+Applies on top of Andre Przywara's 32-bit build hack (patch 0001).
+
+1. Kconfig: CONFIG_SUNXI_DRAM_MAX_SIZE is 0x100000000 for the H616, but
+   in a 32-bit build phys_size_t is 32-bit so that truncates to 0, and
+   dram_init() then clamps gd->ram_size to zero. Add a 32-bit default.
+
+2. board.c: add an installer that runs on the FEL path and writes a
+   64-bit U-Boot payload from DRAM into the eMMC at the Allwinner boot
+   offset (LBA 16), with read-back verification. The 64-bit SPL cannot
+   return to the AArch32 FEL BROM, so a 32-bit SPL is used purely as a
+   vehicle to install a real 64-bit U-Boot into eMMC.
+
+Needs CONFIG_SPL_MMC_WRITE=y, otherwise mmc_bwrite() is a stub that
+silently returns 0 without touching hardware.
+
+---
+diff --git a/arch/arm/mach-sunxi/Kconfig b/arch/arm/mach-sunxi/Kconfig
+index 575ca1d4..7188590f 100644
+--- a/arch/arm/mach-sunxi/Kconfig
++++ b/arch/arm/mach-sunxi/Kconfig
+@@ -262,6 +262,7 @@ config MACH_SUNXI_H3_H5
+ # TODO: try out A80's 8GiB DRAM space
+ config SUNXI_DRAM_MAX_SIZE
+ 	hex
++	default 0x80000000 if SUNXI_ARMV8_32BIT_BUILD
+ 	default 0x100000000 if MACH_SUN50I_H616
+ 	default 0xC0000000 if MACH_SUN50I || MACH_SUN50I_H5 || MACH_SUN50I_H6
+ 	default 0x80000000
+diff --git a/arch/arm/mach-sunxi/board.c b/arch/arm/mach-sunxi/board.c
+index 849e59c3..e1cb498a 100644
+--- a/arch/arm/mach-sunxi/board.c
++++ b/arch/arm/mach-sunxi/board.c
+@@ -203,9 +203,143 @@ static int gpio_init(void)
+ 	return 0;
+ }
+ 
++/*
++ * FEL-mode eMMC installer for the Wudung W01 / Tanix TX1 / Vontar QTV Q1
++ * (Allwinner H313, a binned H616).
++ *
++ * Why this exists
++ * ---------------
++ * These boxes have no SD slot, no SPI flash and no exposed UART, so USB FEL
++ * is the only way in. But the H616 BROM runs FEL in AArch32 and a 64-bit SPL
++ * cannot return to it (see board/sunxi/README.sunxi64), so `sunxi-fel uboot`
++ * with a normal arm64 build always dies with "usb_bulk_send() ERROR -7".
++ *
++ * Andre Przywara's 32-bit build hack (applied on top of this) makes the SPL
++ * itself AArch32, which *can* return to FEL. That gives us a working
++ * code-execution channel on the board - so we use it as an installer: run a
++ * throwaway 32-bit SPL over FEL purely to write a real 64-bit U-Boot into
++ * eMMC, then boot that from eMMC from then on.
++ *
++ * What it does
++ * ------------
++ * The BROM on this box ignores the eMMC hardware boot partitions entirely
++ * (BOOT_PARTITION_ENABLE reads back as set, yet it still boots from the user
++ * area), so the payload goes to the standard Allwinner boot offset of 8 KiB
++ * (LBA 16) in the eMMC *user area*, which is where the stock Android TOC0
++ * image lives. There is ~36 MiB of unpartitioned space there before the
++ * first GPT partition (first-lba = 73728), so a ~1 MiB bootloader fits with
++ * room to spare and no partition data is touched.
++ *
++ * Protocol
++ * --------
++ * The host does, in this order:
++ *   sunxi-fel spl   sunxi-spl.bin          # run once: init DRAM, return to FEL
++ *   sunxi-fel write 0x50000000 <payload>   # needs DRAM, hence the step above
++ *   sunxi-fel writel 0x40100 <sectors>     # payload size, ceil(bytes / 512)
++ *   sunxi-fel spl   sunxi-spl.bin          # run again: this actually installs
++ *   sunxi-fel read  0x40000 0x20 out.bin   # read the result words back
++ *
++ * Result words at INST_STATUS (little endian):
++ *   +0x00  0xE33A1234 once the installer has started
++ *   +0x04  mmc_initialize() return code (0 = ok)
++ *   +0x08  1 if the eMMC was found as legacy device 1
++ *   +0x0c  mmc_init() return code (0 = ok)
++ *   +0x10  sectors written  (must equal the requested count)
++ *   +0x14  sectors read back
++ *   +0x18  checksum of the source buffer in DRAM
++ *   +0x1c  checksum of what was read back from eMMC (must equal +0x18)
++ *   +0x20  0xC0FFEEEE once it is done and about to return to FEL
++ *
++ * The write is skipped entirely unless a sane sector count was supplied, and
++ * the checksums are the only thing that should be trusted as "it worked".
++ */
++#define INST_STATUS	0x40000		/* SRAM scratch, survives return to FEL */
++#define INST_NSECTORS	0x40100		/* host writes payload size here */
++#define INST_SRC	0x50000000	/* DRAM: payload, uploaded by sunxi-fel */
++#define INST_VERIFY	0x60000000	/* DRAM: read-back buffer */
++#define INST_TARGET_LBA	16		/* 8 KiB: Allwinner BROM boot offset */
++#define INST_MAX_SECTORS 4096		/* 2 MiB ceiling, sanity limit only */
++
++static u32 inst_checksum(const void *buf, u32 len)
++{
++	const u8 *p = buf;
++	u32 sum = 0x12345678;
++	u32 i;
++
++	for (i = 0; i < len; i++) {
++		sum = (sum << 1) | (sum >> 31);
++		sum ^= p[i];
++	}
++
++	return sum;
++}
++
++static void sunxi_fel_emmc_install(void)
++{
++	struct blk_desc *desc;
++	struct mmc *mmc;
++	u32 nsectors;
++	int ret;
++
++	writel(0xE33A1234, INST_STATUS + 0x00);
++
++	nsectors = readl(INST_NSECTORS);
++	if (!nsectors || nsectors > INST_MAX_SECTORS)
++		goto done;
++
++	/*
++	 * Nothing has set up the MMC subsystem on the FEL path, and
++	 * find_mmc_device() walks a list that only mmc_initialize() ever
++	 * initialises - calling it first would dereference garbage and hang
++	 * the CPU with no console to report it.
++	 *
++	 * mmc_initialize() -> board_mmc_init() (board/sunxi/board.c) brings up
++	 * MMC0 and, because CONFIG_MMC_SUNXI_SLOT_EXTRA=2 for this board, the
++	 * eMMC on MMC2 as well - registering it as legacy device 1.
++	 */
++	ret = mmc_initialize(NULL);
++	writel((u32)ret, INST_STATUS + 0x04);
++	if (ret)
++		goto done;
++
++	mmc = find_mmc_device(1);
++	writel(mmc ? 1 : 0, INST_STATUS + 0x08);
++	if (!mmc)
++		goto done;
++
++	ret = mmc_init(mmc);
++	writel((u32)ret, INST_STATUS + 0x0c);
++	if (ret)
++		goto done;
++
++	desc = mmc_get_blk_desc(mmc);
++
++	/* the payload goes to the user area, not a hardware boot partition */
++	if (mmc_switch_part(mmc, 0))
++		goto done;
++
++	ret = desc->block_write(desc, INST_TARGET_LBA, nsectors,
++				(void *)INST_SRC);
++	writel((u32)ret, INST_STATUS + 0x10);
++
++	ret = desc->block_read(desc, INST_TARGET_LBA, nsectors,
++			       (void *)INST_VERIFY);
++	writel((u32)ret, INST_STATUS + 0x14);
++
++	writel(inst_checksum((void *)INST_SRC, nsectors * 512),
++	       INST_STATUS + 0x18);
++	writel(inst_checksum((void *)INST_VERIFY, nsectors * 512),
++	       INST_STATUS + 0x1c);
++
++done:
++	writel(0xC0FFEEEE, INST_STATUS + 0x20);
++}
++
+ static int spl_board_load_image(struct spl_image_info *spl_image,
+ 				struct spl_boot_device *bootdev)
+ {
++	sunxi_fel_emmc_install();
++
+ 	debug("Returning to FEL sp=%x, lr=%x\n", fel_stash.sp, fel_stash.lr);
+ 	return_to_fel(fel_stash.sp, fel_stash.lr);
+ 

@@ -1,0 +1,14 @@
+[Unit]
+Description=Install MiniArch from USB to internal eMMC (one shot, then powers off)
+After=local-fs.target
+Before=getty.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/install-to-emmc.sh
+StandardOutput=journal+console
+StandardError=journal+console
+TimeoutStartSec=1800
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,4 @@
+build-installer/
+build-uboot/
+*.log
+*.tmp

@@ -1,0 +1,71 @@
+commit 39b43797f21f3ba85ce54618b4cce7dc644bfd6d
+Author: Andre Przywara <andre.przywara@arm.com>
+Date:   Sun Jul 20 16:49:52 2025 +0100
+
+    HACK: sunxi: h616: tanix-tx1: use 32-bit compilation
+
+diff --git a/arch/arm/mach-sunxi/Kconfig b/arch/arm/mach-sunxi/Kconfig
+index 0a7c029b15a..2655aa4c7d6 100644
+--- a/arch/arm/mach-sunxi/Kconfig
++++ b/arch/arm/mach-sunxi/Kconfig
+@@ -334,6 +334,9 @@ config SUNXI_DRAM_MAX_SIZE
+ 	default 0xC0000000 if MACH_SUN50I || MACH_SUN50I_H5 || MACH_SUN50I_H6
+ 	default 0x80000000
+ 
++config SUNXI_ARMV8_32BIT_BUILD
++	bool "Build 32-bit binaries for ARMv8 SoCs"
++
+ choice
+ 	prompt "Sunxi SoC Variant"
+ 	optional
+@@ -520,7 +523,8 @@ config MACH_SUN50I_H6
+ 
+ config MACH_SUN50I_H616
+ 	bool "sun50i (Allwinner H616)"
+-	select ARM64
++	select ARM64 if !SUNXI_ARMV8_32BIT_BUILD
++	select CPU_V7A if SUNXI_ARMV8_32BIT_BUILD
+ 	select DRAM_SUN50I_H616
+ 	select SUN50I_GEN_H6
+ 	imply OF_UPSTREAM
+diff --git a/arch/arm/mach-sunxi/board.c b/arch/arm/mach-sunxi/board.c
+index 08d55b3a0e3..ab46d62b7cb 100644
+--- a/arch/arm/mach-sunxi/board.c
++++ b/arch/arm/mach-sunxi/board.c
+@@ -471,8 +471,8 @@ void board_init_f(ulong dummy)
+ 	/* Enable non-secure access to some peripherals */
+ 	tzpc_init();
+ 
+-	clock_init();
+ 	timer_init();
++	clock_init();
+ 	gpio_init();
+ 
+ 	spl_init();
+diff --git a/board/sunxi/board.c b/board/sunxi/board.c
+index 943b6221b8a..c8228bd42ef 100644
+--- a/board/sunxi/board.c
++++ b/board/sunxi/board.c
+@@ -186,6 +186,8 @@ enum env_location env_get_location(enum env_operation op, int prio)
+ 	return ENVL_UNKNOWN;
+ }
+ 
++#define CONFIG_NON_SECURE
++
+ /* called only from U-Boot proper */
+ int board_init(void)
+ {
+diff --git a/configs/tanix_tx1_defconfig b/configs/tanix_tx1_defconfig
+index 1bd167ce0f6..9ed3818d2d7 100644
+--- a/configs/tanix_tx1_defconfig
++++ b/configs/tanix_tx1_defconfig
+@@ -1,7 +1,8 @@
+ CONFIG_ARM=y
+ CONFIG_ARCH_SUNXI=y
+-CONFIG_DEFAULT_DEVICE_TREE="allwinner/sun50i-h313-tanix-tx1"
++CONFIG_DEFAULT_DEVICE_TREE="../arm64/allwinner/sun50i-h313-tanix-tx1"
+ CONFIG_SPL=y
++CONFIG_SUNXI_ARMV8_32BIT_BUILD=y
+ CONFIG_DRAM_SUNXI_DX_ODT=0x06060606
+ CONFIG_DRAM_SUNXI_DX_DRI=0x0d0d0d0d
+ CONFIG_DRAM_SUNXI_CA_DRI=0x1919

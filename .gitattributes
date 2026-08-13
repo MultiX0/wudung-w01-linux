@@ -1,0 +1,8 @@
+# These are consumed on Linux. CRLF would break shell scripts outright
+# ("bad interpreter: /bin/bash^M") and stop the patches applying.
+*.sh      text eol=lf
+*.patch   text eol=lf
+*.service text eol=lf
+*.md      text eol=lf
+LICENSE   text eol=lf
+*.bin     binary
