@@ -25,6 +25,12 @@ cd "$WORK"
 	https://github.com/u-boot/u-boot.git u-boot
 cd u-boot
 
+# Reset first so the script can be re-run. Without this a second run hits an
+# already-patched tree, git apply fails, and set -e aborts with nothing saying
+# that you simply need to start from a clean checkout.
+git checkout -- . 2>/dev/null || true
+git clean -fdq 2>/dev/null || true
+
 git apply "$HERE/../patches/0001-apritzel-h616-32bit-build.patch"
 git apply "$HERE/../patches/0002-fel-emmc-tool.patch"
 

@@ -21,6 +21,7 @@
 # bootloader we installed at LBA 16.
 #
 set -u
+set -o pipefail        # else a failed source tar in a pipeline reads as success
 
 LOG=/boot/emmc-install.log
 BOOT_PART=/dev/mmcblk2p7
@@ -29,7 +30,26 @@ ROOT_PART=/dev/mmcblk2p17
 EMMC=/dev/mmcblk2
 MIN_EMMC_BYTES=15000000000
 
-fail() { echo "FATAL: $*"; sync; sleep 2; poweroff; exit 1; }
+# On failure, do NOT power off. Success powers the box off, and the README
+# tells the user that switching off means it finished, so powering off after a
+# failure is indistinguishable from success and they would unplug the stick
+# and be left with a dead box. Staying on is the failure signal.
+fail() {
+	echo "FATAL: $*"
+	echo
+	echo "=============================================="
+	echo " INSTALL FAILED. The box has deliberately"
+	echo " stayed powered on so you can tell."
+	echo " Read emmc-install.log on the USB stick."
+	echo "=============================================="
+	sync
+	exit 1
+}
+
+# /boot is the USB stick, and the log lives there. If it is not mounted the
+# redirect below fails, the whole block is skipped, and the box powers off
+# having done nothing at all.
+[ -d /boot ] || { echo "FATAL: /boot is not mounted"; exit 1; }
 
 {
 	echo "=== install MiniArch to eMMC ==="
@@ -54,10 +74,16 @@ fail() { echo "FATAL: $*"; sync; sleep 2; poweroff; exit 1; }
 	# --- boot partition ----------------------------------------------
 	cp -a /boot/. /mnt/newboot/ || fail "boot copy failed"
 
-	# point the kernel at the eMMC root instead of the USB stick
+	# point the kernel at the eMMC root instead of the USB stick.
+	# sed -i exits 0 when it matches nothing, so this MUST be verified: if the
+	# user skipped the edit in README Part 3 Step 3, the kernel would boot
+	# looking for root on the USB stick and hang with no console to say why.
 	sed -i "s#root=/dev/sda2#root=$ROOT_PART#" \
 		/mnt/newboot/extlinux/extlinux.conf
 	grep APPEND /mnt/newboot/extlinux/extlinux.conf
+	grep -q "root=$ROOT_PART" /mnt/newboot/extlinux/extlinux.conf \
+		|| fail "extlinux.conf does not point at $ROOT_PART. Did you do the
+extlinux edit in Part 3 Step 3 before booting the stick?"
 
 	# --- root filesystem ---------------------------------------------
 	tar -C / \
@@ -75,6 +101,8 @@ fail() { echo "FATAL: $*"; sync; sleep 2; poweroff; exit 1; }
 	sed -i 's#/boot\tvfat#/boot\text4#; s#/boot vfat#/boot ext4#' \
 		/mnt/newroot/etc/fstab
 	cat /mnt/newroot/etc/fstab
+	grep -q "$BOOT_PART" /mnt/newroot/etc/fstab \
+		|| fail "fstab still does not reference $BOOT_PART for /boot"
 
 	# CRITICAL: this very script got copied into the new rootfs along with
 	# everything else, and its systemd unit came with it. Left enabled, the

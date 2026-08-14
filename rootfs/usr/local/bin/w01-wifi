@@ -68,26 +68,37 @@ connect)
     iw dev "$W" scan 2>/dev/null | sed -n 's/^[[:space:]]*SSID: //p' | sort -u | grep -v '^$' | sed 's/^/  /'
     echo
     printf "SSID: "
-    read SSID
+    read -r SSID
     [ -n "$SSID" ] || { echo "no SSID given"; exit 1; }
     printf "Password (leave empty for an open network): "
+    # restore echo even if the user hits Ctrl-C at the prompt
+    trap 'stty echo 2>/dev/null' INT TERM EXIT
     stty -echo 2>/dev/null
-    read PASS
+    read -r PASS
     stty echo 2>/dev/null
+    trap - INT TERM EXIT
     echo
 
     mkdir -p /etc/wpa_supplicant
+    # Build into a temp file first. Writing straight to $CONF truncates it
+    # before wpa_passphrase runs, so a rejected passphrase would destroy a
+    # working saved network and lock you out of a headless box.
+    TMPC=$(mktemp) || exit 1
     if [ -z "$PASS" ]; then
         {
             echo "network={"
             echo "  ssid=\"$SSID\""
             echo "  key_mgmt=NONE"
             echo "}"
-        } > "$CONF"
-    else
-        wpa_passphrase "$SSID" "$PASS" > "$CONF" || exit 1
+        } > "$TMPC"
+    elif ! wpa_passphrase "$SSID" "$PASS" > "$TMPC"; then
+        rm -f "$TMPC"
+        echo "wpa_passphrase rejected that (WPA passwords are 8 to 63 characters)."
+        echo "Your previous network, if any, has been left alone."
+        exit 1
     fi
     unset PASS
+    mv "$TMPC" "$CONF"
     chmod 600 "$CONF"
 
     systemctl enable "wpa_supplicant@$W" >/dev/null 2>&1

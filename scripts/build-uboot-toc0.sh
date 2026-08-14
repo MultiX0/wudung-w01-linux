@@ -13,14 +13,17 @@ mkdir -p "$WORK"
 cd "$WORK"
 
 # --- ARM Trusted Firmware -------------------------------------------------
-[ -d arm-trusted-firmware ] || git clone --depth 1 \
+# Pinned: unpinned master has broken this build before.
+[ -d arm-trusted-firmware ] || git clone --depth 1 --branch v2.11.0 \
 	https://github.com/ARM-software/arm-trusted-firmware.git
 ( cd arm-trusted-firmware && \
   make CROSS_COMPILE=aarch64-linux-gnu- PLAT=sun50i_h616 DEBUG=0 bl31 )
 BL31="$WORK/arm-trusted-firmware/build/sun50i_h616/release/bl31.bin"
 
 # --- U-Boot ---------------------------------------------------------------
-[ -d u-boot ] || git clone --depth 1 https://github.com/u-boot/u-boot.git
+# Pinned to the same tag the FEL SPL is built from, so both halves match.
+[ -d u-boot ] || git clone --depth 1 --branch v2025.07 \
+	https://github.com/u-boot/u-boot.git
 cd u-boot
 
 make tanix_tx1_defconfig
@@ -45,5 +48,14 @@ make -j"$(nproc)" CROSS_COMPILE=aarch64-linux-gnu-
 head -c 8 u-boot-sunxi-with-spl.bin | grep -q 'TOC0.GLH' \
 	|| { echo "ERROR: output is not a TOC0 image"; exit 1; }
 
+# fel-install-uboot.sh looks for this name, so emit it rather than making the
+# user work out that they have to rename it.
+cp u-boot-sunxi-with-spl.bin u-boot-sunxi-with-spl-toc0.bin
+
 echo
-echo "built: $WORK/u-boot/u-boot-sunxi-with-spl.bin"
+echo "built: $WORK/u-boot/u-boot-sunxi-with-spl-toc0.bin"
+echo
+echo "install it with:"
+echo "  sudo ./fel-install-uboot.sh \\"
+echo "       $WORK/u-boot/spl/sunxi-spl.bin \\"
+echo "       $WORK/u-boot/u-boot-sunxi-with-spl-toc0.bin"

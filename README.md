@@ -1,11 +1,31 @@
-# Mainline Linux on the Wudung W01 (Allwinner H313)
+<p align="center">
+  <img src="assets/wu01.png" alt="Wudung W01" width="180">
+</p>
 
-Turn a cheap Wudung W01 Android TV box into a Linux machine that boots by
-itself from its internal eMMC. No SD card slot, no serial port, no soldering.
+<h1 align="center">Mainline Linux on the Wudung W01</h1>
 
-This box has no SD card slot, no SPI flash, and no exposed UART, and its single
-USB port is the only way in. That combination is why there was no working
-recipe for it before. This repository is that recipe.
+<p align="center"><b>Arch Linux ARM on a cheap Allwinner H313 TV box, booting from its own eMMC.</b></p>
+
+<p align="center">
+  <img alt="SoC" src="https://img.shields.io/badge/SoC-Allwinner%20H313-informational">
+  <img alt="kernel" src="https://img.shields.io/badge/kernel-7.1.1-blue">
+  <img alt="wifi" src="https://img.shields.io/badge/WiFi-working-success">
+  <img alt="licence" src="https://img.shields.io/badge/licence-MIT-lightgrey">
+</p>
+
+<p align="center">
+  <a href="#part-2-install-u-boot-onto-the-box">Install</a> &middot;
+  <a href="#part-5-wifi-and-ssh">WiFi</a> &middot;
+  <a href="#recovering-a-box-that-will-not-boot">Recovery</a> &middot;
+  <a href="https://github.com/MultiX0/wudung-w01-linux/releases">Releases</a> &middot;
+  <a href="#for-ai-assistants">For AI assistants</a>
+</p>
+
+---
+
+No SD card slot, no SPI flash, no exposed UART, and a single USB port that is
+the only way in. That combination is why there was no working recipe for this
+box before. This repository is that recipe, including working WiFi.
 
 Hardware-identical boxes this also applies to:
 
@@ -21,7 +41,7 @@ Hardware-identical boxes this also applies to:
 | CPU | Quad Cortex-A53, ARMv8, 64-bit |
 | RAM | 1 to 2 GiB LPDDR3 |
 | Storage | eMMC only, about 15 GiB. No SD slot. No SPI flash. |
-| USB | One USB 2.0 type-A port, which is also the FEL recovery port |
+| USB | One USB 2.0 type-A port, which doubles as the FEL port (FEL is the USB recovery mode built into the chip itself, and cannot be erased) |
 | PMIC | AXP313 |
 | WiFi | **AltoBeam ATBM6031**, SDIO `007a:6011`, chip id reports `6032i`. Works, see [Part 5](#part-5-wifi-and-ssh). |
 | WiFi antenna | single chain, 1T1R, 2.4 GHz only. No 5 GHz radio on this board. |
@@ -29,9 +49,8 @@ Hardware-identical boxes this also applies to:
 
 Note the WiFi part. The device tree in every image floating around calls it
 `smartchip,s9083s`, and that is wrong. The chip only ever answers to SDIO
-vendor `0x007a`, which is AltoBeam. Believing the device tree instead of the
-bus cost hours, and the `s9083s` driver has to be removed or it claims the
-device and the real driver never sees it.
+vendor `0x007a`, which is AltoBeam. The `s9083s` driver has to be removed or
+it claims the device and the real driver never sees it.
 
 End result: Arch Linux ARM booting from eMMC to a login prompt on HDMI, with
 working WiFi, SSH, and the USB port free for a keyboard.
@@ -52,8 +71,11 @@ Hardware:
   rectangular plug. This is not a common cable and you probably have to buy
   one. A normal phone charging cable will not work.
 * A toothpick or similar thin plastic stick.
-* A USB flash drive, 4 GB or larger. Only used during installation.
-* A USB keyboard, and ideally a small USB hub, because the box has one port.
+* A USB flash drive, 4 GB or larger.
+* A USB keyboard.
+* **A small USB hub.** The box has exactly one USB port, and Part 5 needs the
+  keyboard and the flash drive connected at the same time. Without a hub you
+  will get stuck there.
 
 Software: a Linux PC, or Windows 10/11 with WSL2. Setup for both is below.
 
@@ -181,20 +203,30 @@ usbipd attach --wsl --busid 1-2
 Then check it worked, in Linux:
 
 ```bash
-sunxi-fel ver
+sudo sunxi-fel ver
 ```
 
-You should see a line containing `soc=00001823(H616)`. If you get
-`ERROR: Allwinner USB FEL device not found!`, unplug the box and repeat this
-step.
+You should see a line containing `soc=00001823(H616)`.
+
+`sudo` is needed. A USB device passed into WSL2 by usbipd is owned by root and
+the `sunxi-tools` package installs no udev rule, so without `sudo` you get
+`ERROR: Allwinner USB FEL device not found!` even when the box is sitting
+there in FEL mode perfectly. Every `sunxi-fel` command in this guide needs it.
+
+If you do get that error with `sudo`, the box is genuinely not in FEL mode.
+Unplug it and repeat this step.
 
 ## Step 3. Install U-Boot
 
+This uses the clone you made in [Step 1](#step-1-download-the-files). If you
+put it somewhere else, change the path to match:
+
 ```bash
 cd ~/w01/wudung-w01-linux/scripts
-chmod +x fel-install-uboot.sh
-./fel-install-uboot.sh
+sudo ./fel-install-uboot.sh
 ```
+
+It takes a few seconds.
 
 With no arguments it uses the binaries in `../prebuilt/`, which is what you
 want. Pass paths explicitly only if you built your own.
@@ -215,10 +247,24 @@ Do not continue unless you see it.
 
 This image is somebody else's work, see [Credits](#credits).
 
+The asset is xz-compressed, so it has to be unpacked before writing. Note the
+`-f` on curl: without it, curl writes a "404 Not Found" page into the `.img`
+file, exits successfully, and you find out only when the box refuses to boot.
+
 ```bash
 cd ~/w01
-curl -LO https://github.com/warpme/miniarch/releases/download/15.2.0/MiniArch-15.2.0-06.06.2026-7.1.1-board-h313.tanix_tx1-SD-Image.img
+curl -fLO https://github.com/warpme/miniarch/releases/download/172667447a9/MiniArch-15.2.0-06.06.2026-7.1.1-board-h313.tanix_tx1-SD-Image.img.xz
+unxz MiniArch-15.2.0-06.06.2026-7.1.1-board-h313.tanix_tx1-SD-Image.img.xz
+ls -lh MiniArch-*.img
 ```
+
+The download is about 194 MiB and expands to roughly 3 GiB, so `ls` must show
+a multi-gigabyte file. If it shows a few kilobytes, the download failed.
+
+That release tag is a commit hash and MiniArch will publish newer ones. If the
+link is dead, take the newest `board-h313.tanix_tx1` asset from the
+[MiniArch releases page](https://github.com/warpme/miniarch/releases). Pick
+`tanix_tx1`, not one of the `x96_q` variants.
 
 ## Step 2. Write it to the USB flash drive
 
@@ -230,30 +276,57 @@ usbipd bind --busid 1-1
 usbipd attach --wsl --busid 1-1
 ```
 
-Now in Linux, find the drive. Check this carefully, the next command erases
-whatever you point it at:
+Now find the drive in Linux:
 
 ```bash
 lsblk
 ```
 
-Write the image. Replace `/dev/sdX` with your drive, for example `/dev/sdb`,
-and note it is the whole drive and not a partition like `/dev/sdb1`:
+On the machine this was developed on the flash drive came up as `/dev/sdg`,
+and that is the letter used in the command below. **Yours will almost
+certainly be a different letter.** Look at the `lsblk` output and find the
+device whose size matches your flash drive. It looked like this here:
+
+```
+sdg      8:96   1  14.6G  0 disk
+```
+
+`dd` erases whatever you point it at, without asking, and pointing it at the
+wrong disk destroys that disk. Check the letter before you press Enter, and
+use the whole drive (`/dev/sdg`), not a partition (`/dev/sdg1`):
 
 ```bash
 sudo dd if=MiniArch-15.2.0-06.06.2026-7.1.1-board-h313.tanix_tx1-SD-Image.img \
-        of=/dev/sdX bs=4M status=progress conv=fsync
+        of=/dev/sdg bs=4M status=progress conv=fsync
 sync
 ```
+
+Change `sdg` to your own letter first. It takes a few minutes, and
+`status=progress` will appear to stall at the end while `conv=fsync` flushes.
+That is normal, wait for the prompt.
+
+Then make the kernel re-read the new partition table, or the next step fails
+with "special device does not exist":
+
+```bash
+sudo partprobe /dev/sdg || sudo blockdev --rereadpt /dev/sdg
+lsblk /dev/sdg
+```
+
+You should now see two partitions. On WSL2, if they still do not appear,
+`usbipd detach` and `usbipd attach` the drive again.
 
 ## Step 3. Point the image at the USB stick
 
 The image ships configured to boot from eMMC, which is not where the system is
 yet, so it has to be told to use the USB stick instead:
 
+Again, `sdg` below is the letter this was developed on. Use the same letter you
+used for `dd`, with `1` on the end for the first partition:
+
 ```bash
 sudo mkdir -p /mnt/w01boot
-sudo mount /dev/sdX1 /mnt/w01boot
+sudo mount /dev/sdg1 /mnt/w01boot
 sudo sed -i 's#root=/dev/mmcblk2p2#root=/dev/sda2#' /mnt/w01boot/extlinux/extlinux.conf
 sudo sed -i 's#console=ttyS0,115200n8#console=tty0 console=ttyS0,115200n8#' /mnt/w01boot/extlinux/extlinux.conf
 grep APPEND /mnt/w01boot/extlinux/extlinux.conf
@@ -292,19 +365,24 @@ Plug the stick back into your PC, attach it to WSL2 again if you are on
 Windows, then:
 
 ```bash
-sudo mount /dev/sdX2 /mnt
+sudo mount /dev/sdg2 /mnt
 cd ~/w01/wudung-w01-linux/emmc-install
 sudo cp install-to-emmc.sh /mnt/usr/local/bin/
 sudo chmod +x /mnt/usr/local/bin/install-to-emmc.sh
 sudo cp install-to-emmc.service /mnt/etc/systemd/system/
+sudo mkdir -p /mnt/etc/systemd/system/multi-user.target.wants
 sudo ln -sf /etc/systemd/system/install-to-emmc.service \
             /mnt/etc/systemd/system/multi-user.target.wants/install-to-emmc.service
+ls -l /mnt/etc/systemd/system/multi-user.target.wants/install-to-emmc.service
 sync
 sudo umount /mnt
 ```
 
-Note that this uses partition 2 (`/dev/sdX2`), the root filesystem, not
-partition 1.
+That `ls` must show the symlink. If it errors, the installer will not run and
+the box will simply boot to a login prompt instead of installing.
+
+Note that this uses partition **2** (`/dev/sdg2`), the root filesystem, not
+partition 1. Substitute your own drive letter as before.
 
 ## Step 2. Run it
 
@@ -324,34 +402,76 @@ Unplug the USB stick, leave it out, and power the box on.
 It boots Arch Linux ARM from its own eMMC. The USB port is now free for a
 keyboard.
 
+### Disarm the USB stick before you go on
+
+The stick is still a self-running installer. `install-to-emmc.service` was
+removed from the copy on the eMMC, but it is still enabled on the stick
+itself, so if the box ever boots from the stick again it will reformat
+`mmcblk2p7` and `mmcblk2p17` and destroy the install you just made.
+
+Put the stick back in your PC and disable it:
+
+```bash
+sudo mount /dev/sdg2 /mnt
+sudo rm -f /mnt/etc/systemd/system/multi-user.target.wants/install-to-emmc.service
+sync
+sudo umount /mnt
+```
+
+Same drive letter as before, partition 2. Do this now. The next part uses the
+stick again, and the WiFi chip needs frequent power cycles.
+
 ---
 
 # Part 5: WiFi and SSH
+
+**You need the USB hub for this part.** The keyboard and the flash drive have
+to be plugged in together.
 
 Log in as `root` (password `root` on the stock MiniArch image; change it with
 `passwd`).
 
 ## Step 1. Install the WiFi bundle
 
-Download `w01-wifi-v1.1.tar.gz` from the
-[Releases page](https://github.com/MultiX0/wudung-w01-linux/releases) onto the
-USB stick from your PC, then on the box:
+On your PC, download the newest `w01-wifi-*.tar.gz` from the
+[Releases page](https://github.com/MultiX0/wudung-w01-linux/releases) and copy
+it onto the **first partition of the stick, the small FAT one** that shows up
+as `BOOT`. Not the big Linux partition.
+
+Then on the box, with the stick and keyboard both on the hub:
 
 ```bash
 mount -L BOOT /mnt
-tar xf /mnt/w01-wifi-v1.1.tar.gz -C /root
-cd /root/w01-wifi-v1.1
+tar xf /mnt/w01-wifi-*.tar.gz -C /root
+cd /root/w01-wifi-*
 ./install-wifi.sh
 ```
 
-That installs the driver, the firmware, `iw`, `wpa_supplicant`, `openssh`, the
-`wifi` command, and enables everything at boot. It is safe to re-run.
+That installs the driver, the firmware, `iw`, `wpa_supplicant`, and the `wifi`
+command, and sets the driver to load at every boot. It is safe to re-run.
 
-The bundle carries `iw` and `wpa_supplicant` as offline packages because the
-MiniArch image does not ship them, and you cannot download them before you
-have WiFi. That chicken-and-egg is the reason the bundle exists.
+MiniArch already ships `dhcpcd` and `openssh`; it does not ship `iw` or
+`wpa_supplicant`, and you cannot download those before you have WiFi. That
+chicken-and-egg is why the bundle carries them as offline packages.
 
-## Step 2. Connect
+## Step 2. Allow root over SSH
+
+Do this before connecting, or the `ssh` in Step 4 will refuse your password.
+OpenSSH defaults to `prohibit-password` for root. A drop-in file is used rather
+than appending to `sshd_config`, because sshd honours the *first* occurrence of
+a setting and an appended line is often dead text:
+
+```bash
+passwd
+mkdir -p /etc/ssh/sshd_config.d
+echo 'PermitRootLogin yes' > /etc/ssh/sshd_config.d/10-root.conf
+systemctl restart sshd
+```
+
+Set a real password first. This is a root shell reachable from anything on
+your network, and the stock image password is `root`.
+
+## Step 3. Connect
 
 ```bash
 wifi connect
@@ -361,12 +481,15 @@ It scans, asks for the SSID and the password (hidden as you type), saves it,
 connects, and prints the IP address.
 
 That is the only manual step. From then on it reconnects **automatically** on
-every boot and whenever the link drops, because `wpa_supplicant@wld0` and
-`dhcpcd@wld0` are enabled as systemd services.
+every boot and whenever the link drops, because `wifi connect` enables
+`wpa_supplicant@<interface>` and `dhcpcd@<interface>` as systemd services.
 
-## Step 3. SSH in
+The interface name is assigned by udev and is not the same on every box (here
+it came up as `wld0`, not `wlan0`). Run `wifi` on its own to see yours.
 
-The installer enables `sshd`. From your PC:
+## Step 4. SSH in
+
+From your PC:
 
 ```bash
 ssh root@<the IP it printed>
@@ -374,13 +497,6 @@ ssh root@<the IP it printed>
 
 The address is also shown on the login screen before you log in, so a headless
 box tells you where it is.
-
-To allow root login over SSH, if you have not already:
-
-```bash
-echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config
-systemctl restart sshd
-```
 
 ## The `wifi` command
 
@@ -418,7 +534,7 @@ pacman -Syu
 Then install what you want:
 
 ```bash
-pacman -S wget ufw nano htop
+pacman -S wget nano htop
 ```
 
 Never run `pacman -Sy` followed by `pacman -S`. On Arch that produces a
@@ -650,7 +766,7 @@ are as useful as the answer.
 `/vendor/modules/atbm613x_wifi_sdio.ko` from a source tree called
 `atbm6132bs`. The driver to use is
 [gtxaspec/atbm60xx](https://github.com/gtxaspec/atbm60xx), a CW1200 "Apollo"
-derivative. Trusting the device tree over the bus wasted hours.
+derivative.
 
 **The open-source driver's firmware does not run on this board.** The repo
 ships `svn14195`. It loads and the chip executes it, but the WSM startup
@@ -728,9 +844,8 @@ Things that looked like the cause and were not, each disproved by measurement:
   is harmless and the system runs fine afterwards.
 * `cfg80211: failed to load regulatory.db` is harmless. Install
   `wireless-regdb` if you want it gone.
-* There is only one USB port, so use a hub if you want a keyboard and anything
-  else at the same time.
-* `pacman -S` fails with 404 on a fresh image until you run `pacman -Syu`.
+* There is only one USB port. A hub is required, see
+  [What you need](#what-you-need).
 
 ---
 
@@ -742,20 +857,28 @@ no bootloader, no kernel, no console.
 
 ```bash
 # box in FEL mode, connected to the PC
-export FEL=/path/to/sunxi-fel
-./scripts/fel-emmc.py gpt                         # see the partition table
-./scripts/fel-emmc.py cat 7 /extlinux/extlinux.conf   # read the boot config
+cd ~/w01/wudung-w01-linux
+sudo ./scripts/fel-emmc.py gpt                          # the partition table
+sudo ./scripts/fel-emmc.py cat 7 /extlinux/extlinux.conf   # the boot config
 ```
 
 If a bad kernel module makes the box crash on boot, stop it loading by editing
 the kernel command line in place. The replacement must be the **same byte
 length** as the text it replaces, which is why the padding below matters:
 
+Run the `cat` above first and copy the text you are replacing out of the real
+output, because it must match exactly. On an install built by following this
+guide, the APPEND line contains `console=tty0 console=ttyS0,115200n8`, which
+is 35 characters, and so is `module_blacklist=atbm603x_wifi_sdio`:
+
 ```bash
-./scripts/fel-emmc.py patch 7 /extlinux/extlinux.conf \
-  "console=tty0 systemd.mask=autoinstall-phase2.service" \
-  "console=tty0 module_blacklist=atbm603x_wifi_sdio    "
+sudo ./scripts/fel-emmc.py patch 7 /extlinux/extlinux.conf \
+  "console=tty0 console=ttyS0,115200n8" \
+  "module_blacklist=atbm603x_wifi_sdio"
 ```
+
+If the lengths do not match, pad the shorter one with trailing spaces. The
+tool refuses the write rather than corrupting the file.
 
 Use `module_blacklist=` (a kernel parameter, enforced inside `load_module()`),
 not `modprobe.blacklist=`. The latter only suppresses alias-based autoloading
@@ -800,11 +923,12 @@ Releases carry the same things prebuilt: the U-Boot image, the FEL SPL, and
 Not required, the prebuilt binaries on the Releases page are the same thing.
 
 ```bash
-sudo apt install -y gcc-arm-linux-gnueabihf gcc-aarch64-linux-gnu bison flex \
+sudo apt install -y build-essential git file \
+    gcc-arm-linux-gnueabihf gcc-aarch64-linux-gnu bison flex \
     libssl-dev bc device-tree-compiler swig python3-dev python3-pyelftools \
     uuid-dev libgnutls28-dev pkg-config zlib1g-dev
 
-cd scripts
+cd ~/w01/wudung-w01-linux/scripts
 ./build-installer-spl.sh     # 32-bit FEL SPL (eMMC read/write tool)
 ./build-uboot-toc0.sh        # 64-bit TOC0 U-Boot payload
 ```
@@ -814,8 +938,10 @@ WiFi driver and firmware:
 ```bash
 sudo apt install -y android-sdk-libsparse-utils python3
 
-# firmware, out of the stock Android image you downloaded for restoring
-./extract-atbm-firmware.sh 313_TX1_6031_20250513.img
+# firmware, out of the stock Android image. Unpack the .rar from the
+# "Restoring stock Android" section first (needs unrar or 7-Zip); the file
+# inside is a single large .img, named for the board and build date.
+./extract-atbm-firmware.sh <the .img from the stock firmware archive>
 
 # driver, against the exact kernel that runs on the box
 KHDR=/path/to/usr/lib/modules/7.1.1/build ./build-atbm-driver.sh

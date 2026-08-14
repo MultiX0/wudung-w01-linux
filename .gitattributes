@@ -1,8 +1,16 @@
 # These are consumed on Linux. CRLF would break shell scripts outright
 # ("bad interpreter: /bin/bash^M") and stop the patches applying.
+#
+# The catch-all comes first so files with no extension are covered too:
+# rootfs/usr/local/bin/w01-wifi and scripts/fel-emmc.py have no .sh suffix,
+# and without this a clone on Windows (core.autocrlf=true, the default there)
+# checks them out with CRLF and they will not run.
+*         text=auto eol=lf
 *.sh      text eol=lf
 *.patch   text eol=lf
 *.service text eol=lf
 *.md      text eol=lf
 LICENSE   text eol=lf
 *.bin     binary
+*.png     binary
+*.tar.gz  binary

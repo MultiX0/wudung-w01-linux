@@ -80,7 +80,17 @@ sudo umount "$WORK/vendor"
 
 echo
 ls -l "$OUT/atbm_fw.bin"
-md5sum "$OUT/atbm_fw.bin"
-echo "expected: 822266515afa86b838ed3f621d4db042"
-echo
-echo "Install it on the box as /lib/firmware/atbm_fw.bin"
+
+# Check it rather than asking you to eyeball two hex strings. The wrong blob
+# (the WiFi+BT combo from the same directory, or the driver's own svn14195)
+# loads happily and then hangs forever in wsm_startup_done timeout.
+if echo "822266515afa86b838ed3f621d4db042  $OUT/atbm_fw.bin" | md5sum -c - ; then
+	echo
+	echo "Install it on the box as /lib/firmware/atbm_fw.bin"
+else
+	echo
+	echo "ERROR: this is not the known-good firmware."
+	echo "You may have a different stock image. Check that you extracted"
+	echo "ATBM_lite_fw_sdio.bin (WiFi only) and not the blecomb one."
+	exit 1
+fi

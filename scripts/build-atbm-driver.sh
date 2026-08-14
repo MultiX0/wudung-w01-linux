@@ -32,10 +32,19 @@ EOF
     exit 1
 fi
 
+# Pinned. patches/0003 is a 1496-line diff generated against exactly this
+# commit; one upstream change and it stops applying, with an error that looks
+# like your setup is broken rather than that upstream moved.
+ATBM_COMMIT=933a3bc2b3e1100ae00831b82132f8ae200a324d
+
 mkdir -p "$WORK"; cd "$WORK"
 [ -d atbm60xx ] || git clone https://github.com/gtxaspec/atbm60xx.git
 cd atbm60xx
+git fetch --all --quiet || true
+git checkout --quiet "$ATBM_COMMIT" || {
+    echo "could not check out $ATBM_COMMIT"; exit 1; }
 git checkout -- . 2>/dev/null || true
+git clean -fdq 2>/dev/null || true
 git apply "$HERE/../patches/0003-atbm60xx-w01-wifi.patch"
 
 make -j"$(nproc)" \

@@ -2,3 +2,5 @@ build-installer/
 build-uboot/
 *.log
 *.tmp
+build-atbm/
+__pycache__/

@@ -267,8 +267,15 @@ def main():
                 break
         else:
             sys.exit("could not map file block")
+        o = off % fs.bs
+        if o + len(old) > fs.bs:
+            sys.exit("that text straddles a %d-byte block boundary, which this "
+                     "tool does not handle. Pick a shorter piece of the line."
+                     % fs.bs)
         blk = bytearray(fs.blk(disk))
-        blk[off % fs.bs: off % fs.bs + len(old)] = new
+        blk[o:o + len(old)] = new
+        if len(blk) != fs.bs:
+            sys.exit("internal error: block changed size, refusing to write")
         tmp = "/tmp/.felblk.bin"
         open(tmp, "wb").write(bytes(blk))
         abs_lba = fs.p + disk * fs.bs // 512
