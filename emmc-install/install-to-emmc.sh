@@ -123,6 +123,14 @@ extlinux edit in Part 3 Step 3 before booting the stick?"
 	sfdisk --part-attrs "$EMMC" "$BOOT_PARTNUM" "63,LegacyBIOSBootable"
 	sfdisk --part-attrs "$EMMC" "$BOOT_PARTNUM"
 
+	# --- disarm this stick --------------------------------------------
+	# The unit is still enabled on the stick itself. If the box ever boots
+	# from this stick again (eMMC boot fails, or someone leaves it in) it
+	# would reformat the install that was just made. Disable it here so the
+	# stick is inert from now on and nobody has to remember to do it.
+	rm -f /etc/systemd/system/multi-user.target.wants/install-to-emmc.service
+	echo "installer disabled on the USB stick"
+
 	# --- done ---------------------------------------------------------
 	df -h "$BOOT_PART" "$ROOT_PART"
 	du -sh /mnt/newroot/ 2>/dev/null

@@ -73,9 +73,8 @@ Hardware:
 * A toothpick or similar thin plastic stick.
 * A USB flash drive, 4 GB or larger.
 * A USB keyboard.
-* **A small USB hub.** The box has exactly one USB port, and Part 5 needs the
-  keyboard and the flash drive connected at the same time. Without a hub you
-  will get stuck there.
+* Optionally a small USB hub. The box has one USB port and the guide never
+  needs two things plugged in at once, but a hub is handy.
 
 Software: a Linux PC, or Windows 10/11 with WSL2. Setup for both is below.
 
@@ -316,162 +315,82 @@ lsblk /dev/sdg
 You should now see two partitions. On WSL2, if they still do not appear,
 `usbipd detach` and `usbipd attach` the drive again.
 
-## Step 3. Point the image at the USB stick
+## Step 3. Prepare the stick
 
-The image ships configured to boot from eMMC, which is not where the system is
-yet, so it has to be told to use the USB stick instead:
+One command does everything the stick needs: it points the kernel at the USB
+root, turns on video output, and installs the WiFi driver, its firmware, `iw`,
+`wpa_supplicant`, the `wifi` command and the eMMC installer into the stick's
+root filesystem.
 
-Again, `sdg` below is the letter this was developed on. Use the same letter you
-used for `dd`, with `1` on the end for the first partition:
+That last part matters. The eMMC installer copies the whole root filesystem
+across, so the WiFi driver lands on the eMMC with everything else. The box
+ends up with working WiFi without you ever having to install anything on it.
 
 ```bash
-sudo mkdir -p /mnt/w01boot
-sudo mount /dev/sdg1 /mnt/w01boot
-sudo sed -i 's#root=/dev/mmcblk2p2#root=/dev/sda2#' /mnt/w01boot/extlinux/extlinux.conf
-sudo sed -i 's#console=ttyS0,115200n8#console=tty0 console=ttyS0,115200n8#' /mnt/w01boot/extlinux/extlinux.conf
-grep APPEND /mnt/w01boot/extlinux/extlinux.conf
-sudo umount /mnt/w01boot
+cd ~/w01/wudung-w01-linux/scripts
+sudo ./prepare-usb.sh /dev/sdg
 ```
 
-That `grep` should print a line containing `root=/dev/sda2` and `console=tty0`.
-Adding `console=tty0` is what makes kernel messages appear on the TV. Without
-it they only go to a serial port that this box does not expose.
+Same drive letter as the `dd` step, the whole drive and not a partition. It
+downloads the WiFi bundle from the Releases page automatically; if you have
+no internet on this PC, download `w01-wifi-*.tar.gz` yourself and pass it:
 
-## Step 4. Boot it
-
-1. Unplug the USB stick from the PC and plug it into the box.
-2. Make sure HDMI is connected.
-3. Power the box on normally, with no toothpick this time.
-
-You should see four penguins, then:
-
-```
-Arch Linux ARM 7.1.1 (tty1)
-alarm login:
+```bash
+sudo BUNDLE=~/Downloads/w01-wifi-v1.1.tar.gz ./prepare-usb.sh /dev/sdg
 ```
 
-Log in as `alarm` with password `alarm`. The root password is `root`.
-
-Linux now works, but only while the USB stick is plugged in. Continue if you
-want the box to boot on its own.
+It refuses to touch a drive that does not look like the MiniArch image, and
+finishes with `Stick is ready.`
 
 ---
 
-# Part 4: Move Linux onto the eMMC
+# Part 4: Install onto the eMMC
 
-## Step 1. Put the install script on the stick
+## Step 1. Boot the stick once
 
-Plug the stick back into your PC, attach it to WSL2 again if you are on
-Windows, then:
+1. Unplug the USB stick from the PC and plug it into the box.
+2. Connect HDMI if you want to watch. It is not required.
+3. Power the box on normally, with no toothpick this time.
 
-```bash
-sudo mount /dev/sdg2 /mnt
-cd ~/w01/wudung-w01-linux/emmc-install
-sudo cp install-to-emmc.sh /mnt/usr/local/bin/
-sudo chmod +x /mnt/usr/local/bin/install-to-emmc.sh
-sudo cp install-to-emmc.service /mnt/etc/systemd/system/
-sudo mkdir -p /mnt/etc/systemd/system/multi-user.target.wants
-sudo ln -sf /etc/systemd/system/install-to-emmc.service \
-            /mnt/etc/systemd/system/multi-user.target.wants/install-to-emmc.service
-ls -l /mnt/etc/systemd/system/multi-user.target.wants/install-to-emmc.service
-sync
-sudo umount /mnt
-```
+The stick boots Linux and immediately installs it onto the eMMC. You do not
+need a keyboard: it formats two eMMC partitions, copies the whole system
+across including the WiFi driver, disables itself on the stick so it can never
+run again by accident, and then **switches the box off** when it is done.
 
-That `ls` must show the symlink. If it errors, the installer will not run and
-the box will simply boot to a login prompt instead of installing.
+That takes a few minutes, and the box powering itself off is the signal that
+it worked.
 
-Note that this uses partition **2** (`/dev/sdg2`), the root filesystem, not
-partition 1. Substitute your own drive letter as before.
+If the box stays on and sits at a login prompt instead, something failed. Put
+the stick back in your PC and read `emmc-install.log` on the first partition,
+which says exactly what went wrong.
 
-## Step 2. Run it
-
-Plug the stick into the box and power it on.
-
-It now runs on its own: it formats two eMMC partitions, copies everything
-across, and then powers the box off by itself when it is finished. This takes a
-few minutes. The box switching off is the signal that it is done.
-
-If you want to check what happened, put the stick back in your PC and read
-`/boot/emmc-install.log` on the first partition.
-
-## Step 3. Boot standalone
+## Step 2. Boot standalone
 
 Unplug the USB stick, leave it out, and power the box on.
 
 It boots Arch Linux ARM from its own eMMC. The USB port is now free for a
 keyboard.
 
-### Disarm the USB stick before you go on
-
-The stick is still a self-running installer. `install-to-emmc.service` was
-removed from the copy on the eMMC, but it is still enabled on the stick
-itself, so if the box ever boots from the stick again it will reformat
-`mmcblk2p7` and `mmcblk2p17` and destroy the install you just made.
-
-Put the stick back in your PC and disable it:
-
-```bash
-sudo mount /dev/sdg2 /mnt
-sudo rm -f /mnt/etc/systemd/system/multi-user.target.wants/install-to-emmc.service
-sync
-sudo umount /mnt
-```
-
-Same drive letter as before, partition 2. Do this now. The next part uses the
-stick again, and the WiFi chip needs frequent power cycles.
-
 ---
 
 # Part 5: WiFi and SSH
 
-**You need the USB hub for this part.** The keyboard and the flash drive have
-to be plugged in together.
+The driver and everything it needs are already on the box, installed in
+Part 3. All that is left is telling it which network to join.
 
-Log in as `root` (password `root` on the stock MiniArch image; change it with
-`passwd`).
+Plug in a keyboard, power the box on, and log in as `root` (the stock MiniArch
+password is `root`).
 
-## Step 1. Install the WiFi bundle
+## Step 1. Set a password
 
-On your PC, download the newest `w01-wifi-*.tar.gz` from the
-[Releases page](https://github.com/MultiX0/wudung-w01-linux/releases) and copy
-it onto the **first partition of the stick, the small FAT one** that shows up
-as `BOOT`. Not the big Linux partition.
-
-Then on the box, with the stick and keyboard both on the hub:
-
-```bash
-mount -L BOOT /mnt
-tar xf /mnt/w01-wifi-*.tar.gz -C /root
-cd /root/w01-wifi-*
-./install-wifi.sh
-```
-
-That installs the driver, the firmware, `iw`, `wpa_supplicant`, and the `wifi`
-command, and sets the driver to load at every boot. It is safe to re-run.
-
-MiniArch already ships `dhcpcd` and `openssh`; it does not ship `iw` or
-`wpa_supplicant`, and you cannot download those before you have WiFi. That
-chicken-and-egg is why the bundle carries them as offline packages.
-
-## Step 2. Allow root over SSH
-
-Do this before connecting, or the `ssh` in Step 4 will refuse your password.
-OpenSSH defaults to `prohibit-password` for root. A drop-in file is used rather
-than appending to `sshd_config`, because sshd honours the *first* occurrence of
-a setting and an appended line is often dead text:
+The box is about to be reachable over your network with SSH enabled, so do
+this first:
 
 ```bash
 passwd
-mkdir -p /etc/ssh/sshd_config.d
-echo 'PermitRootLogin yes' > /etc/ssh/sshd_config.d/10-root.conf
-systemctl restart sshd
 ```
 
-Set a real password first. This is a root shell reachable from anything on
-your network, and the stock image password is `root`.
-
-## Step 3. Connect
+## Step 2. Connect
 
 ```bash
 wifi connect
@@ -480,16 +399,18 @@ wifi connect
 It scans, asks for the SSID and the password (hidden as you type), saves it,
 connects, and prints the IP address.
 
-That is the only manual step. From then on it reconnects **automatically** on
-every boot and whenever the link drops, because `wifi connect` enables
-`wpa_supplicant@<interface>` and `dhcpcd@<interface>` as systemd services.
+That is the only manual step in the whole guide. From then on it reconnects
+**automatically** on every boot and whenever the link drops, because
+`wifi connect` enables `wpa_supplicant@<interface>` and `dhcpcd@<interface>`
+as systemd services.
 
 The interface name is assigned by udev and is not the same on every box (here
 it came up as `wld0`, not `wlan0`). Run `wifi` on its own to see yours.
 
-## Step 4. SSH in
+## Step 3. SSH in
 
-From your PC:
+SSH is already enabled and root login is already permitted, both set up in
+Part 3. From your PC:
 
 ```bash
 ssh root@<the IP it printed>
@@ -535,6 +456,17 @@ Then install what you want:
 
 ```bash
 pacman -S wget nano htop
+```
+
+If instead you get `signature from ... is unknown trust` and `invalid or
+corrupted package (PGP signature)`, the image's keyring is older than the
+packages on the mirror. Refresh it once:
+
+```bash
+pacman-key --init
+pacman-key --populate archlinuxarm
+pacman -Sy archlinux-keyring archlinuxarm-keyring
+pacman -Syu
 ```
 
 Never run `pacman -Sy` followed by `pacman -S`. On Arch that produces a
@@ -899,13 +831,14 @@ patches/
   0002-fel-emmc-tool.patch               FEL eMMC read/write SPL, DRAM size fix
   0003-atbm60xx-w01-wifi.patch           WiFi driver: Linux 7.1 port + W01 fixes
 scripts/
+  prepare-usb.sh                         injects everything into the USB stick
   fel-install-uboot.sh                   installs U-Boot over FEL, main tool
   fel-emmc.py                            read/write eMMC over FEL, recovery tool
   build-installer-spl.sh                 build the 32-bit FEL SPL yourself
   build-uboot-toc0.sh                    build the 64-bit TOC0 U-Boot yourself
   build-atbm-driver.sh                   build the WiFi driver yourself
   extract-atbm-firmware.sh               pull WiFi firmware from stock Android
-  install-wifi.sh                        installs WiFi on the box, runs there
+  install-wifi.sh                        adds WiFi to an already-running box
 rootfs/
   usr/local/bin/w01-wifi                 the `wifi` command
 emmc-install/
@@ -998,6 +931,14 @@ plausible assumptions instead of measurements.
    trip is expensive for the user.
 4. Change one thing at a time, and keep the last known-good `.ko` where the
    user can restore it in one command.
+
+**Design note:** the WiFi driver, firmware and userspace are injected into
+the USB stick by `scripts/prepare-usb.sh` on the PC, before the stick is ever
+booted. The eMMC installer then copies the whole root filesystem across, so
+the driver arrives on the eMMC automatically. Do not tell users to install the
+WiFi bundle by hand on the box: the box has one USB port, so a stick and a
+keyboard cannot both be attached, and the manual route strands them.
+`scripts/install-wifi.sh` exists only for a box that is already running.
 
 **Hardware constraints to respect:** one USB port, no SD slot, no SPI flash,
 no exposed UART, single 2.4 GHz WiFi chain. The user cannot "just add a serial
