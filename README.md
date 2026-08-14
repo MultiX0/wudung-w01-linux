@@ -1,5 +1,7 @@
 <p align="center">
-  <img src="assets/wu01.png" alt="Wudung W01" width="180">
+  <a href="https://share.temu.com/7g4eht8xY2B">
+    <img src="assets/wu01.png" alt="Wudung W01 Android TV box" width="200">
+  </a>
 </p>
 
 <h1 align="center">Mainline Linux on the Wudung W01</h1>
@@ -15,7 +17,7 @@
 
 <p align="center">
   <a href="#part-2-install-u-boot-onto-the-box">Install</a> &middot;
-  <a href="#part-5-wifi-and-ssh">WiFi</a> &middot;
+  <a href="#part-5-first-boot-wifi-and-ssh">WiFi</a> &middot;
   <a href="#recovering-a-box-that-will-not-boot">Recovery</a> &middot;
   <a href="https://github.com/MultiX0/wudung-w01-linux/releases">Releases</a> &middot;
   <a href="#for-ai-assistants">For AI assistants</a>
@@ -27,11 +29,16 @@ No SD card slot, no SPI flash, no exposed UART, and a single USB port that is
 the only way in. That combination is why there was no working recipe for this
 box before. This repository is that recipe, including working WiFi.
 
+**Where to get one:** this was developed on a Wudung W01 bought from
+[this exact Temu listing](https://share.temu.com/7g4eht8xY2B). Any of the
+boxes below is the same board, but that is the one every command here was
+tested against. Click the picture above to go to it.
+
 Hardware-identical boxes this also applies to:
 
 | Name | Notes |
 |---|---|
-| Wudung W01 | what this was developed on |
+| Wudung W01 | what this was developed on, [Temu listing](https://share.temu.com/7g4eht8xY2B) |
 | Tanix TX1 | same PCB, `CS_H313_TX1_EMCP_V1.1` and `QHZIW_H313_TX1_EMCP_V2.0` |
 | Vontar QTV Q1 | same board |
 
@@ -43,7 +50,7 @@ Hardware-identical boxes this also applies to:
 | Storage | eMMC only, about 15 GiB. No SD slot. No SPI flash. |
 | USB | One USB 2.0 type-A port, which doubles as the FEL port (FEL is the USB recovery mode built into the chip itself, and cannot be erased) |
 | PMIC | AXP313 |
-| WiFi | **AltoBeam ATBM6031**, SDIO `007a:6011`, chip id reports `6032i`. Works, see [Part 5](#part-5-wifi-and-ssh). |
+| WiFi | **AltoBeam ATBM6031**, SDIO `007a:6011`, chip id reports `6032i`. Works, see [Part 5](#part-5-first-boot-wifi-and-ssh). |
 | WiFi antenna | single chain, 1T1R, 2.4 GHz only. No 5 GHz radio on this board. |
 | Bluetooth | present in hardware (combo part), not covered here |
 
@@ -373,51 +380,283 @@ keyboard.
 
 ---
 
-# Part 5: WiFi and SSH
+# Part 5: First boot, WiFi and SSH
 
-The driver and everything it needs are already on the box, installed in
-Part 3. All that is left is telling it which network to join.
+The driver, its firmware, `iw`, `wpa_supplicant` and the `wifi` command are
+already on the box. They were injected into the stick in Part 3 and copied to
+the eMMC in Part 4. Nothing needs installing here.
 
-Plug in a keyboard, power the box on, and log in as `root` (the stock MiniArch
-password is `root`).
+You need the box, its power supply, HDMI, and a keyboard. The USB stick is not
+needed again.
 
-## Step 1. Set a password
+## Step 1. Log in and set a password
 
-The box is about to be reachable over your network with SSH enabled, so do
-this first:
+Power the box on. When it reaches:
+
+```
+Arch Linux ARM 7.1.1 (tty1)
+alarm login:
+```
+
+log in as `root`, password `root`.
+
+SSH is enabled and root login is permitted, so the box is reachable from
+anything on your network the moment it has an address. Change the password
+before that happens:
 
 ```bash
 passwd
 ```
 
-## Step 2. Connect
+## Step 2. See which networks are in range
+
+```bash
+wifi scan
+```
+
+You get one SSID per line:
+
+```
+MyNetwork
+HomeNet-2.4G
+Neighbour-WiFi
+```
+
+If the list is empty, or you get `No wireless interface found`, the driver did
+not come up. Jump to [WiFi troubleshooting](#wifi-troubleshooting); in almost
+every case the answer is a cold power cycle.
+
+Only 2.4 GHz networks appear. This board has no 5 GHz radio, so a 5 GHz-only
+SSID will never show up.
+
+## Step 3. Connect
 
 ```bash
 wifi connect
 ```
 
-It scans, asks for the SSID and the password (hidden as you type), saves it,
-connects, and prints the IP address.
+It scans again, then asks:
 
-That is the only manual step in the whole guide. From then on it reconnects
-**automatically** on every boot and whenever the link drops, because
-`wifi connect` enables `wpa_supplicant@<interface>` and `dhcpcd@<interface>`
-as systemd services.
-
-The interface name is assigned by udev and is not the same on every box (here
-it came up as `wld0`, not `wlan0`). Run `wifi` on its own to see yours.
-
-## Step 3. SSH in
-
-SSH is already enabled and root login is already permitted, both set up in
-Part 3. From your PC:
-
-```bash
-ssh root@<the IP it printed>
+```
+SSID: MyNetwork
+Password:
 ```
 
-The address is also shown on the login screen before you log in, so a headless
-box tells you where it is.
+Type the SSID exactly as it appeared in the scan, case included. The password
+is hidden as you type. It then associates, requests an address, and prints
+what it got.
+
+Nothing else is needed. `wifi connect` enables `wpa_supplicant@<interface>`
+and `dhcpcd@<interface>` as systemd services, so the box reconnects by itself
+on every boot and whenever the link drops.
+
+The interface name comes from udev and is not the same on every box. Here it
+came up as `wld0`, not `wlan0`. You never need to type it: every `wifi`
+subcommand finds it for you.
+
+## Step 4. Check it actually works
+
+```bash
+wifi
+```
+
+which prints the link and the address:
+
+```
+interface : wld0
+  Connected to aa:bb:cc:11:22:33 (on wld0)
+  SSID: MyNetwork
+  freq: 2447.0
+  signal: -61 dBm
+  rx bitrate: 19.5 MBit/s MCS 2
+  tx bitrate: 65.0 MBit/s MCS 7
+
+  IP address: 192.0.2.8
+  ssh root@192.0.2.8
+```
+
+Then confirm you can reach the internet, not just the router:
+
+```bash
+ping -c 5 1.1.1.1
+```
+
+Replies mean routing works. If that succeeds but names do not resolve, test
+DNS separately:
+
+```bash
+ping -c 3 archlinuxarm.org
+```
+
+Reading the output:
+
+| What you see | What it means |
+|---|---|
+| `Connected to ...` and an IP | working |
+| `not connected` | association failed, check the password and re-run `wifi connect` |
+| Connected but no IP | DHCP failed. `systemctl restart dhcpcd@wld0` with your own interface name |
+| `ping 1.1.1.1` works, names fail | DNS. Check `cat /etc/resolv.conf` |
+| `Network is unreachable` | no address at all, treat as the "no IP" row |
+
+Some packet loss on `ping` is expected on this hardware, see
+[Known issues](#known-issues). TCP absorbs it, so SSH and `pacman` are
+reliable even when `ping` looks poor.
+
+## Step 5. SSH in from your PC
+
+```bash
+ssh root@192.0.2.8
+```
+
+with the address `wifi` printed. It is also shown on the login screen before
+you log in, so a headless box tells you where it is.
+
+From here you can unplug the keyboard and the HDMI cable and work over SSH.
+
+## Step 6. Give it a fixed address, optional
+
+DHCP may hand out a different address after a reboot, which is annoying for a
+headless box. To pin one:
+
+```bash
+wifi static 192.0.2.50
+```
+
+Pick an address on your own network: keep the first three numbers the same as
+the one DHCP gave you, and choose a last number outside your router's DHCP
+pool (high ones like `.50` or `.200` are usually safe). The gateway and DNS
+are taken from the current connection, written to `/etc/dhcpcd.conf` between
+`# w01-static` markers, and applied at once. It survives reboots.
+
+Back to automatic:
+
+```bash
+wifi dhcp
+```
+
+---
+
+# Part 6: Best practices after the install
+
+Do these once, in this order, on a freshly installed box.
+
+## Fix the clock first
+
+Package signatures are time-sensitive. If the clock is wrong, every signature
+looks invalid and you will chase the wrong problem:
+
+```bash
+timedatectl set-ntp true
+timedatectl status
+```
+
+Check the date is right before going on. The box has no RTC battery, so it
+starts from whatever the image was built with until NTP fixes it, and NTP
+needs the network from Part 5.
+
+## Repair the pacman keyring
+
+On a fresh MiniArch image `pacman` will usually fail like this:
+
+```
+error: m4: signature from "Arch Linux ARM Build System <builder@archlinuxarm.org>" is unknown trust
+:: File /var/cache/pacman/pkg/m4-1.4.21-2-aarch64.pkg.tar.xz is corrupted
+   (invalid or corrupted package (PGP signature)).
+```
+
+Read that carefully, because it is misleading. The download is fine and the
+package is almost certainly not corrupted. The key it is signed with is
+present but **not trusted**, so pacman refuses to install. Note that
+`checking keys in keyring` and `checking package integrity` both reported
+100% just above it.
+
+Arch Linux ARM signs packages with the build system key
+`68B3537F39A313B3E574D06777193F152BDBE6A6`. Rebuild the local trust database:
+
+```bash
+rm -rf /etc/pacman.d/gnupg
+pacman-key --init
+pacman-key --populate archlinuxarm
+rm -f /var/cache/pacman/pkg/*.pkg.tar.*
+pacman -Syu
+```
+
+`--populate` should print `Appending keys from archlinuxarm.gpg`, then
+`Locally signing trusted keys in keyring`, then `Importing owner trust
+values`. Clearing the cache matters: the half-downloaded packages from the
+failed run are still there and will be rejected again.
+
+If `--populate archlinuxarm` says the keyring does not exist, check:
+
+```bash
+ls -l /usr/share/pacman/keyrings/
+```
+
+You want `archlinuxarm.gpg` and `archlinuxarm-trusted`. If they are missing,
+the keyring package itself is absent and you need
+`pacman -S archlinuxarm-keyring` first, which is awkward because that is the
+thing that is broken. In that case install it with signature checking off for
+that one command:
+
+```bash
+pacman -S --config <(sed 's/^SigLevel.*/SigLevel = Never/' /etc/pacman.conf) archlinuxarm-keyring
+```
+
+then re-run the `pacman-key` steps above.
+
+**Do not** simply set `SigLevel = Never` or `TrustAll` in `/etc/pacman.conf`
+and leave it there. That disables signature verification permanently for
+everything you ever install. It is the wrong fix and the ArchWiki advises
+against it. Repairing the keyring is a one-time job.
+
+## Update, then install what you want
+
+Always `-Syu`, never `-Sy` followed by `-S`. A partial upgrade on Arch breaks
+the system sooner or later:
+
+```bash
+pacman -Syu
+pacman -S wget nano htop fastfetch
+```
+
+`fastfetch` is a quick way to confirm the system is what you think it is:
+
+```bash
+fastfetch
+```
+
+## Firewall
+
+The box has SSH open with root login. On a home network that is usually fine,
+but a firewall costs nothing:
+
+```bash
+pacman -S ufw
+ufw allow ssh
+ufw enable
+systemctl enable ufw
+```
+
+`ufw allow ssh` must come before `ufw enable`, or you will lock yourself out
+of your own box the moment the rules load. Check afterwards:
+
+```bash
+ufw status verbose
+```
+
+## Optional tidying
+
+Silence the harmless regulatory warning in `dmesg`:
+
+```bash
+pacman -S wireless-regdb
+```
+
+Free the space taken by the package cache once things are working:
+
+```bash
+pacman -Sc
+```
 
 ## The `wifi` command
 
@@ -432,54 +671,9 @@ wifi forget              remove the saved network
 
 `myip` prints the current addresses.
 
-## Static IP
-
-```bash
-wifi static 192.0.2.50
-```
-
-The gateway and DNS are taken from the current default route, written to
-`/etc/dhcpcd.conf` between `# w01-static` markers, and applied immediately.
-It survives reboots. `wifi dhcp` removes it again.
-
-## Installing packages
-
-The image ships a package database older than the mirror, so a plain
-`pacman -S something` fails with **404**, not a timeout. Refresh and upgrade
-first, and always together:
-
-```bash
-pacman -Syu
-```
-
-Then install what you want:
-
-```bash
-pacman -S wget nano htop
-```
-
-If instead you get `signature from ... is unknown trust` and `invalid or
-corrupted package (PGP signature)`, the image's keyring is older than the
-packages on the mirror. Refresh it once:
-
-```bash
-pacman-key --init
-pacman-key --populate archlinuxarm
-pacman -Sy archlinux-keyring archlinuxarm-keyring
-pacman -Syu
-```
-
-Never run `pacman -Sy` followed by `pacman -S`. On Arch that produces a
-partial upgrade and breaks the system sooner or later. `-Syu` or nothing.
-
-A basic firewall, if you want one:
-
-```bash
-pacman -S ufw
-ufw allow ssh
-ufw enable
-systemctl enable ufw
-```
+See [Part 5 Step 6](#step-6-give-it-a-fixed-address-optional) for what
+`wifi static` actually writes, and [Part 6](#part-6-best-practices-after-the-install)
+for package management and the firewall.
 
 ## WiFi troubleshooting
 
