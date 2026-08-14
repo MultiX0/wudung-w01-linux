@@ -1333,22 +1333,19 @@ index e2b2178..7b04d3f 100644
  int atbm_rx_bh_flush(struct atbm_common *hw_priv)
  {
 diff --git a/hal_apollo/wsm.c b/hal_apollo/wsm.c
-index f25b0ae..3322cc3 100644
+index f25b0ae..7e4a1b6 100644
 --- a/hal_apollo/wsm.c
 +++ b/hal_apollo/wsm.c
-@@ -2035,6 +2035,11 @@ static int wsm_startup_indication(struct atbm_common *hw_priv,
+@@ -2035,6 +2035,8 @@ static int wsm_startup_indication(struct atbm_common *hw_priv,
  	u32 Config[4];
  	u16 firmwareCap2;
  
-+	{
-+		int _n = (int)((buf)->end - (buf)->data);
-+		atbm_printk_err("STARTUP_IND: payload=%d bytes (fixed parser needs 166)\n", _n);
-+		frame_hexdump("STARTUP_IND", (buf)->data, _n > 192 ? 192 : _n);
-+	}
++	atbm_printk_debug("STARTUP_IND: payload=%d bytes (fixed parser needs 166)\n",
++		(int)((buf)->end - (buf)->data));
  	hw_priv->wsm_caps.numInpChBufs	= WSM_GET16(buf);
  	hw_priv->wsm_caps.sizeInpChBuf	= WSM_GET16(buf);
  	hw_priv->wsm_caps.hardwareId	= WSM_GET16(buf);
-@@ -2092,11 +2097,16 @@ static int wsm_startup_indication(struct atbm_common *hw_priv,
+@@ -2092,11 +2094,16 @@ static int wsm_startup_indication(struct atbm_common *hw_priv,
  	}
  #endif //(OLD_RATE_POLICY==0)
  */
@@ -1368,7 +1365,7 @@ index f25b0ae..3322cc3 100644
  
  	atbm_printk_init("apollo wifi WSM init done.\n"
  		"   Input buffers: %d x %d bytes\n"
-@@ -2113,8 +2123,15 @@ static int wsm_startup_indication(struct atbm_common *hw_priv,
+@@ -2113,8 +2120,15 @@ static int wsm_startup_indication(struct atbm_common *hw_priv,
  		hw_priv->wsm_caps.firmwareBuildNumber,
  		hw_priv->wsm_caps.firmwareApiVer,
  		hw_priv->wsm_caps.firmwareCap,Config[0],Config[1],Config[2],hw_priv->wsm_caps.NumOfStations,hw_priv->wsm_caps.NumOfInterfaces);
@@ -1386,7 +1383,7 @@ index f25b0ae..3322cc3 100644
  	hw_priv->wsm_caps.firmwareReady = 1;
  	hw_priv->wsm_caps.exceptionaddr =Config[1];
  	hw_priv->wsm_caps.HiHwCnfBufaddr = Config[2];//ep0 addr
-@@ -2214,7 +2231,8 @@ static int wsm_startup_indication(struct atbm_common *hw_priv,
+@@ -2214,7 +2228,8 @@ static int wsm_startup_indication(struct atbm_common *hw_priv,
  	return 0;
  
  underflow:
@@ -1396,7 +1393,7 @@ index f25b0ae..3322cc3 100644
  	return -EINVAL;
  }
  #define DBG_PRINT_BUF_SIZE_MAX 390
-@@ -4232,7 +4250,7 @@ static int atbm_get_prio_queue(struct atbm_vif *priv,
+@@ -4232,7 +4247,7 @@ static int atbm_get_prio_queue(struct atbm_vif *priv,
  
  		score = ((edca->aifns + edca->cwMin) << 16) +
  				(edca->cwMax - edca->cwMin) *

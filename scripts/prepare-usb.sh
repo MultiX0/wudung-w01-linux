@@ -25,7 +25,9 @@ DEV="${1:-}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
 KVER="${KVER:-7.1.1}"
-REL="https://github.com/MultiX0/wudung-w01-linux/releases/latest/download/w01-wifi-v1.1.tar.gz"
+# Pinned, not /latest/download/: that resolves against the newest release,
+# so this URL would 404 the day a v1.2 is tagged.
+REL="https://github.com/MultiX0/wudung-w01-linux/releases/download/v1.1/w01-wifi-v1.1.tar.gz"
 
 if [ -z "$DEV" ]; then
 	echo "usage: sudo $0 /dev/sdX      (the whole drive, not a partition)"
@@ -164,6 +166,24 @@ MISSING=""
 [ -x "$MR/usr/bin/dhcpcd" ]          || MISSING="$MISSING dhcpcd"
 [ "$SSH_OK" = yes ]                  || MISSING="$MISSING openssh"
 
+# Bail out BEFORE arming the eMMC installer. Otherwise a failed run still
+# leaves a stick that will happily install a WiFi-less system to the eMMC.
+if [ -n "$MISSING" ]; then
+	echo
+	echo "=============================================================="
+	echo " STOPPING: these are missing from the stick's root filesystem:"
+	echo "    $MISSING"
+	echo
+	echo " The box would have no way to install them, because it has no"
+	echo " network until WiFi works. Add the matching aarch64 packages to"
+	echo " pkgs/ in the WiFi bundle and run this again."
+	echo
+	echo " The eMMC installer has NOT been armed, so this stick will not"
+	echo " install anything yet."
+	echo "=============================================================="
+	exit 1
+fi
+
 echo "=== 5/5 eMMC installer ==="
 install -Dm755 "$REPO/emmc-install/install-to-emmc.sh" \
 	"$MR/usr/local/bin/install-to-emmc.sh"
@@ -176,19 +196,6 @@ ls -l "$MR/etc/systemd/system/multi-user.target.wants/install-to-emmc.service"
 
 sync
 echo
-
-if [ -n "$MISSING" ]; then
-	echo "=============================================================="
-	echo " WARNING: these are missing from the stick's root filesystem:"
-	echo "    $MISSING"
-	echo
-	echo " The box will have no way to install them, because it has no"
-	echo " network until WiFi works. Add the matching aarch64 packages to"
-	echo " pkgs/ in the WiFi bundle and run this again."
-	echo "=============================================================="
-	exit 1
-fi
-
 echo "=============================================================="
 echo " Stick is ready."
 echo

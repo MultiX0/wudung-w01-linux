@@ -36,7 +36,7 @@ CONF="/etc/wpa_supplicant/wpa_supplicant-$W.conf"
 show_status() {
     echo "interface : $W"
     if iw dev "$W" link 2>/dev/null | grep -q "Connected to"; then
-        iw dev "$W" link | sed -n 's/^\s*/  /p' | head -8
+        iw dev "$W" link | sed -n 's/^[[:space:]]*/  /p' | head -8
     else
         echo "  not connected"
     fi
@@ -72,7 +72,8 @@ connect)
     [ -n "$SSID" ] || { echo "no SSID given"; exit 1; }
     printf "Password (leave empty for an open network): "
     # restore echo even if the user hits Ctrl-C at the prompt
-    trap 'stty echo 2>/dev/null' INT TERM EXIT
+    trap 'stty echo 2>/dev/null; echo; exit 130' INT TERM
+    trap 'stty echo 2>/dev/null' EXIT
     stty -echo 2>/dev/null
     read -r PASS
     stty echo 2>/dev/null
@@ -101,8 +102,13 @@ connect)
     mv "$TMPC" "$CONF"
     chmod 600 "$CONF"
 
-    systemctl enable "wpa_supplicant@$W" >/dev/null 2>&1
-    systemctl enable "dhcpcd@$W"         >/dev/null 2>&1
+    # These two are what make the box reconnect after a reboot. If either
+    # fails, say so: the alternative is finding out after a power cycle with
+    # no network to debug over.
+    systemctl enable "wpa_supplicant@$W" >/dev/null \
+        || echo "WARNING: could not enable wpa_supplicant@$W, WiFi will not come up at boot"
+    systemctl enable "dhcpcd@$W" >/dev/null \
+        || echo "WARNING: could not enable dhcpcd@$W, no address at boot"
     systemctl restart "wpa_supplicant@$W"
     echo "associating..."
     i=0
@@ -125,6 +131,13 @@ static)
     ADDR="${2:-}"
     [ -n "$ADDR" ] || { echo "usage: w01-wifi static <ip>[/prefix]"; exit 1; }
     case "$ADDR" in */*) ;; *) ADDR="$ADDR/24" ;; esac
+    # Anything is accepted by dhcpcd.conf without complaint, and the restart
+    # below then takes the interface down. On a headless box that is a one
+    # way trip, so refuse anything that is not an IPv4 address.
+    case "$ADDR" in
+        [0-9]*.[0-9]*.[0-9]*.[0-9]*/[0-9]*) ;;
+        *) echo "not an IPv4 address: $ADDR"; exit 1 ;;
+    esac
     GW=$(ip route show default | awk '{print $3; exit}')
     [ -n "$GW" ] || GW=$(echo "$ADDR" | sed 's#\([0-9]*\.[0-9]*\.[0-9]*\)\..*#\1.1#')
     sed -i "/^# w01-static/,/^# w01-static-end/d" /etc/dhcpcd.conf 2>/dev/null

@@ -2,7 +2,9 @@
 #
 # Install a 64-bit U-Boot into the box's eMMC over USB FEL.
 #
-# Usage:  ./fel-install-uboot.sh [installer-spl] [uboot-payload]
+# Usage:  sudo ./fel-install-uboot.sh [installer-spl] [uboot-payload]
+#
+# sudo is required: under WSL2 the FEL device is root-owned.
 #
 # Defaults to the prebuilt binaries shipped in ../prebuilt.
 # The box must be in FEL mode (see the README) and reachable by sunxi-fel.

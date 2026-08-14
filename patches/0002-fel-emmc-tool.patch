@@ -69,7 +69,7 @@ index b1bf51f4..41f64b49 100644
 + *   sunxi-fel write 0x50000000 <payload>   # needs DRAM, hence the step above
 + *   sunxi-fel writel 0x40100 <sectors>     # payload size, ceil(bytes / 512)
 + *   sunxi-fel spl   sunxi-spl.bin          # run again: this actually installs
-+ *   sunxi-fel read  0x40000 0x20 out.bin   # read the result words back
++ *   sunxi-fel read  0x40000 0x24 out.bin   # read the result words back
 + *
 + * Result words at INST_STATUS (little endian):
 + *   +0x00  0xE33A1234 once the installer has started

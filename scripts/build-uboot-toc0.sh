@@ -55,7 +55,10 @@ cp u-boot-sunxi-with-spl.bin u-boot-sunxi-with-spl-toc0.bin
 echo
 echo "built: $WORK/u-boot/u-boot-sunxi-with-spl-toc0.bin"
 echo
-echo "install it with:"
+# NOTE: the SPL below comes from build-installer-spl.sh, NOT from this tree.
+# This tree is the 64-bit U-Boot; its spl/sunxi-spl.bin is aarch64 and cannot
+# return to the 32-bit FEL BROM, which fails as usb_bulk_send() ERROR -7.
+echo "install it with (run build-installer-spl.sh first if you have not):"
 echo "  sudo ./fel-install-uboot.sh \\"
-echo "       $WORK/u-boot/spl/sunxi-spl.bin \\"
+echo "       $(dirname "$WORK")/build-installer/u-boot/spl/sunxi-spl.bin \\"
 echo "       $WORK/u-boot/u-boot-sunxi-with-spl-toc0.bin"

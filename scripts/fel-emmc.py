@@ -7,12 +7,16 @@ This is the recovery tool. It needs nothing working on the box except the
 BROM: no bootloader, no kernel, no console. If you brick the install, this
 gets you back without opening the case.
 
-  ./fel-emmc.py info
-  ./fel-emmc.py gpt
-  ./fel-emmc.py read  <lba> <sectors> <outfile>
-  ./fel-emmc.py write <lba> <infile>
-  ./fel-emmc.py cat   <partnum> <path>            print a file from an ext4 partition
-  ./fel-emmc.py patch <partnum> <path> <old> <new>  in-place edit, same byte length
+  sudo ./fel-emmc.py info
+  sudo ./fel-emmc.py gpt
+  sudo ./fel-emmc.py read  <lba> <sectors> <outfile>
+  sudo ./fel-emmc.py write <lba> <infile>
+  sudo ./fel-emmc.py cat   <partnum> <path>          print a file from ext4
+  sudo ./fel-emmc.py patch <partnum> <path> <old> <new>  in-place, same length
+
+sudo is required: a usbipd-attached device under WSL2 is root-owned and
+sunxi-tools ships no udev rule, so without it you get "FEL device not found"
+even when the box is sitting in FEL mode.
 
 Requirements: sunxi-fel on PATH (or FEL=/path/to/sunxi-fel), and the
 FEL tool SPL (prebuilt/sunxi-spl-fel-installer.bin, or SPL=/path/to/it).

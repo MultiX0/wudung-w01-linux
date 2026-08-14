@@ -272,6 +272,14 @@ link is dead, take the newest `board-h313.tanix_tx1` asset from the
 [MiniArch releases page](https://github.com/warpme/miniarch/releases). Pick
 `tanix_tx1`, not one of the `x96_q` variants.
 
+**If you use a newer image, the prebuilt WiFi driver will not load.** Kernel
+modules are checked against the exact kernel version at load time, and the one
+in the release is built for 7.1.1. A newer image installs fine and then has no
+WiFi, which you cannot fix from the box because it has no network. Either stay
+on the pinned image, or rebuild the driver for your kernel with
+[`build-atbm-driver.sh`](#building-from-source) and put the result in the
+bundle before running `prepare-usb.sh`.
+
 ## Step 2. Write it to the USB flash drive
 
 On Windows, first attach the flash drive to WSL2. In Administrator PowerShell,
@@ -621,6 +629,16 @@ everything you ever install. It is the wrong fix and the ArchWiki advises
 against it. Repairing the keyring is a one-time job.
 
 ## Update, then install what you want
+
+One thing to know first: `iw` and `wpa_supplicant` were unpacked onto the
+stick directly rather than installed through pacman, because the PC preparing
+the stick has no pacman. Pacman therefore does not know it owns those files.
+If a later install pulls one of them in as a dependency it will stop with
+`exists in filesystem`. Resolve it by letting pacman take ownership:
+
+```bash
+pacman -S --overwrite '/usr/*' iw wpa_supplicant
+```
 
 Always `-Syu`, never `-Sy` followed by `-S`. A partial upgrade on Arch breaks
 the system sooner or later:
@@ -981,9 +999,6 @@ Things that looked like the cause and were not, each disproved by measurement:
   is harmless and the system runs fine afterwards.
 * `cfg80211: failed to load regulatory.db` is harmless. Install
   `wireless-regdb` if you want it gone.
-* There is only one USB port. Nothing in this guide needs two devices
-  attached at once, but you cannot have the stick and a keyboard in together,
-  so a hub is convenient.
 
 ---
 
@@ -1112,9 +1127,11 @@ plausible assumptions instead of measurements.
   `=MODEM==SDIO=-NoBle-`), not the one bundled with the atbm60xx driver
   (`svn14195`), which never completes the WSM startup handshake. The WiFi+BT
   combo blob does not work with this driver either.
-* The driver must be built with `CONFIG_ATBM_FUNC_NOTXCONFIRM=y`. Turning it
-  off to enable the CQM verification path **panics the kernel** in
-  `wsm_sync_channl_reset` during module init and makes the box unbootable.
+* The driver must be built with `CONFIG_ATBM_FUNC_NOTXCONFIRM=y`, which is the
+  Kconfig switch that defines `CONFIG_TX_NO_CONFIRM` in the source. They are
+  the same setting under two names, not two knobs. Turning it off to enable the
+  CQM verification path **panics the kernel** in `wsm_sync_channl_reset` during
+  module init and makes the box unbootable.
 * The chip **only initialises from a cold power-on**. `rmmod`/`modprobe`
   cycles and warm reboots leave it wedged and `mmc1` fails to enumerate it.
   If an interface is missing, the first question is "was the power actually
