@@ -145,6 +145,25 @@ else
 fi
 ln -sf w01-wifi "$MR/usr/local/bin/wifi"
 
+
+# --- netfilter -------------------------------------------------------------
+# This kernel builds nf_tables but not its IPv4/IPv6 families, so the nft
+# backend that Arch points iptables at cannot create a filter table and ufw is
+# unusable. Ship the fix rather than letting every user rediscover it, and add
+# a pacman hook because an iptables upgrade puts the nft symlinks back.
+install -Dm755 "$REPO/rootfs/usr/local/bin/w01-iptables-legacy" \
+	"$MR/usr/local/bin/w01-iptables-legacy"
+install -Dm644 "$REPO/rootfs/etc/pacman.d/hooks/99-w01-iptables-legacy.hook" \
+	"$MR/etc/pacman.d/hooks/99-w01-iptables-legacy.hook"
+printf 'ip_tables\niptable_filter\nip6_tables\nip6table_filter\n' \
+	> "$MR/etc/modules-load.d/iptables-legacy.conf"
+# apply it now, inside the target tree, so it is already right on first boot
+for b in iptables iptables-restore iptables-save \
+         ip6tables ip6tables-restore ip6tables-save; do
+	[ -e "$MR/usr/bin/xtables-legacy-multi" ] && \
+		ln -sf xtables-legacy-multi "$MR/usr/bin/$b"
+done
+
 install -d "$MR/etc/profile.d"
 cat > "$MR/etc/profile.d/w01.sh" <<'EOF'
 # Wudung W01 convenience

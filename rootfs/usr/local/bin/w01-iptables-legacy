@@ -1,0 +1,38 @@
+#!/bin/sh
+#
+# Point iptables at the legacy backend.
+#
+# Arch ships /usr/bin/iptables as a symlink to xtables-nft-multi, so iptables
+# drives nf_tables. The kernel in the MiniArch image for this board builds
+# nf_tables itself but not the IPv4 or IPv6 families for it: CONFIG_NF_TABLES_IPV4
+# is not set and nft_chain_filter.ko / nf_tables_ipv4.ko do not exist. Every
+# table operation therefore fails with
+#
+#   TABLE_ADD failed (Operation not supported): table filter
+#
+# which makes ufw unusable ("ERROR: problem running ufw-init"). You can confirm
+# the kernel is at fault rather than ufw with:  nft add table ip test
+#
+# The legacy netfilter path is fully built (CONFIG_IP_NF_IPTABLES=m,
+# CONFIG_IP_NF_FILTER=m) and works, so use it.
+#
+# This runs from a pacman hook as well as at install time, because the symlinks
+# belong to the iptables package and an upgrade puts them back.
+set -e
+
+[ -e /usr/bin/xtables-legacy-multi ] || {
+    echo "w01-iptables-legacy: xtables-legacy-multi not present, nothing to do"
+    exit 0
+}
+
+for b in iptables iptables-restore iptables-save \
+         ip6tables ip6tables-restore ip6tables-save; do
+    ln -sf xtables-legacy-multi "/usr/bin/$b"
+done
+
+# The legacy path needs these; nothing loads them on demand.
+for m in ip_tables iptable_filter ip6_tables ip6table_filter; do
+    modprobe "$m" 2>/dev/null || true
+done
+
+echo "w01-iptables-legacy: iptables now uses $(iptables --version 2>/dev/null)"

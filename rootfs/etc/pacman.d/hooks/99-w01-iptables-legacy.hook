@@ -1,0 +1,15 @@
+# Re-point iptables at the legacy backend after any iptables install or
+# upgrade. Without this, upgrading iptables silently restores the nft symlinks
+# and ufw breaks again with "TABLE_ADD failed (Operation not supported)",
+# because this board's kernel has no nf_tables IPv4 family.
+[Trigger]
+Type = Path
+Operation = Install
+Operation = Upgrade
+Target = usr/bin/iptables
+Target = usr/bin/xtables-nft-multi
+
+[Action]
+Description = Pointing iptables at the legacy backend (nft unusable on this kernel)
+When = PostTransaction
+Exec = /usr/local/bin/w01-iptables-legacy

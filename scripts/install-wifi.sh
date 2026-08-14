@@ -74,6 +74,19 @@ if [ -n "$MISSING" ]; then
 fi
 
 # -------------------------------------------------------------- commands ---
+# ufw does not work until iptables is pointed at the legacy backend, see
+# w01-iptables-legacy for why.
+if [ -f "$HERE/w01-iptables-legacy" ]; then
+    install -m 755 "$HERE/w01-iptables-legacy" /usr/local/bin/w01-iptables-legacy
+    install -d /etc/pacman.d/hooks
+    [ -f "$HERE/99-w01-iptables-legacy.hook" ] && \
+        install -m 644 "$HERE/99-w01-iptables-legacy.hook" \
+            /etc/pacman.d/hooks/99-w01-iptables-legacy.hook
+    printf 'ip_tables\niptable_filter\nip6_tables\nip6table_filter\n' \
+        > /etc/modules-load.d/iptables-legacy.conf
+    /usr/local/bin/w01-iptables-legacy || true
+fi
+
 install -m 755 "$HERE/w01-wifi" /usr/local/bin/w01-wifi
 ln -sf /usr/local/bin/w01-wifi /usr/local/bin/wifi
 

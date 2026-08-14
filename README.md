@@ -799,6 +799,11 @@ See [Part 5 Step 6](#step-6-give-it-a-fixed-address-optional) for what
 `mmc1` fails to re-enumerate it. Rebooting Linux does not power-cycle the
 chip. Only removing power does.
 
+This was tested directly rather than assumed: a clean `systemctl reboot`
+on a healthy system, driver working and nothing crashed, was enough to do
+it. The box came back up with no WiFi and had to be power cycled. A tidy
+shutdown does not avoid it.
+
 If WiFi is missing after a reboot, pull the power cord for 30 seconds. This is
 not a suggestion, it is the single most common cause of "it stopped working"
 and it cost several hours of misdiagnosis here.
