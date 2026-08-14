@@ -64,7 +64,10 @@ mount "$ROOTP" "$MR"
 [ -d "$MR/lib/modules/$KVER" ] || {
 	echo "the rootfs has no /lib/modules/$KVER."
 	echo "Kernel versions present:"; ls "$MR/lib/modules/" 2>/dev/null
-	echo "Set KVER=<version> and re-run."
+	echo
+	echo "Set KVER=<version> ONLY if you have also rebuilt the driver for that"
+	echo "kernel with scripts/build-atbm-driver.sh. The prebuilt one is built"
+	echo "for 7.1.1 and will not load on anything else."
 	exit 1
 }
 
@@ -90,6 +93,15 @@ B=$(find "$WORK" -maxdepth 1 -type d -name 'w01-wifi-*' | head -1)
 [ -n "$B" ] || { echo "bundle does not contain a w01-wifi-* directory"; exit 1; }
 
 echo "=== 3/5 driver and firmware ==="
+# A module only loads into the kernel it was built for, and depmod does not
+# check. Without this the stick reports success and the box ends up with no
+# WiFi and no way to install any.
+KO_VER=$(modinfo -F vermagic "$B/atbm603x_wifi_sdio.ko" 2>/dev/null | awk '{print $1}')
+if [ -n "$KO_VER" ] && [ "$KO_VER" != "$KVER" ]; then
+	echo "ERROR: the driver is built for kernel $KO_VER but this image runs $KVER."
+	echo "Rebuild it with scripts/build-atbm-driver.sh against $KVER headers."
+	exit 1
+fi
 install -Dm644 "$B/atbm603x_wifi_sdio.ko" \
 	"$MR/lib/modules/$KVER/extramodules/atbm603x_wifi_sdio.ko"
 install -Dm644 "$B/atbm_fw.bin" "$MR/lib/firmware/atbm_fw.bin"
@@ -124,7 +136,13 @@ for p in "$B"/pkgs/*.pkg.tar.*; do
 		--exclude='.BUILDINFO' --exclude='.INSTALL' 2>/dev/null || true
 done
 
-install -Dm755 "$B/w01-wifi" "$MR/usr/local/bin/w01-wifi"
+# Prefer the copy in this checkout: it is the one the README documents and
+# the one people send patches against. Fall back to the bundle if missing.
+if [ -f "$REPO/rootfs/usr/local/bin/w01-wifi" ]; then
+	install -Dm755 "$REPO/rootfs/usr/local/bin/w01-wifi" "$MR/usr/local/bin/w01-wifi"
+else
+	install -Dm755 "$B/w01-wifi" "$MR/usr/local/bin/w01-wifi"
+fi
 ln -sf w01-wifi "$MR/usr/local/bin/wifi"
 
 install -d "$MR/etc/profile.d"
@@ -146,6 +164,13 @@ EOF
 # ssh on by default, with root allowed, so a headless box is reachable
 install -d "$MR/etc/ssh/sshd_config.d"
 echo 'PermitRootLogin yes' > "$MR/etc/ssh/sshd_config.d/10-root.conf"
+# The drop-in only takes effect if sshd_config includes that directory. If it
+# does not, append the setting directly, otherwise OpenSSH keeps its default
+# of prohibit-password and root SSH silently fails.
+if [ -f "$MR/etc/ssh/sshd_config" ] && \
+   ! grep -q '^[[:space:]]*Include[[:space:]]\+/etc/ssh/sshd_config.d' "$MR/etc/ssh/sshd_config"; then
+	echo 'PermitRootLogin yes' >> "$MR/etc/ssh/sshd_config"
+fi
 if [ -f "$MR/usr/lib/systemd/system/sshd.service" ]; then
 	install -d "$MR/etc/systemd/system/multi-user.target.wants"
 	ln -sf /usr/lib/systemd/system/sshd.service \

@@ -60,6 +60,13 @@ fail() {
 	[ -b "$BOOT_PART" ] || fail "no $BOOT_PART"
 	[ -b "$ROOT_PART" ] || fail "no $ROOT_PART"
 
+	# Part 2 (U-Boot over FEL) may have failed or been skipped. Without it the
+	# copy below succeeds, the box powers off exactly as documented, and then
+	# boots nothing. Check for the TOC0 signature the BROM looks for.
+	dd if="$EMMC" bs=512 skip=16 count=1 2>/dev/null | grep -qa TOC0 \
+		|| fail "no TOC0 bootloader at LBA 16. Part 2 did not complete, so this
+box would not boot even after a successful install. Re-run fel-install-uboot.sh."
+
 	SIZE=$(blockdev --getsize64 "$EMMC")
 	[ "$SIZE" -gt "$MIN_EMMC_BYTES" ] || fail "unexpected eMMC size $SIZE"
 
@@ -120,8 +127,13 @@ extlinux edit in Part 3 Step 3 before booting the stick?"
 	# reused does not have it, so without this U-Boot silently falls back
 	# to scanning partition 1 only and never finds extlinux.conf.
 	# Bit 63 is the existing Android attribute; keep it.
-	sfdisk --part-attrs "$EMMC" "$BOOT_PARTNUM" "63,LegacyBIOSBootable"
-	sfdisk --part-attrs "$EMMC" "$BOOT_PARTNUM"
+	# If this silently fails the install still reports success and powers off,
+	# but U-Boot then scans only partition 1, never finds extlinux.conf, and
+	# the box boots nothing with no console to say why. Check it.
+	sfdisk --part-attrs "$EMMC" "$BOOT_PARTNUM" "63,LegacyBIOSBootable" \
+		|| fail "could not set LegacyBIOSBootable on partition $BOOT_PARTNUM"
+	sfdisk --part-attrs "$EMMC" "$BOOT_PARTNUM" | grep -q LegacyBIOSBootable \
+		|| fail "LegacyBIOSBootable did not stick on partition $BOOT_PARTNUM"
 
 	# --- disarm this stick --------------------------------------------
 	# The unit is still enabled on the stick itself. If the box ever boots

@@ -1,5 +1,5 @@
 # These are consumed on Linux. CRLF would break shell scripts outright
-# ("bad interpreter: /bin/bash^M") and stop the patches applying.
+# ("bad interpreter: /bin/bash^M").
 #
 # The catch-all comes first so files with no extension are covered too:
 # rootfs/usr/local/bin/w01-wifi and scripts/fel-emmc.py have no .sh suffix,
@@ -7,10 +7,17 @@
 # checks them out with CRLF and they will not run.
 *         text=auto eol=lf
 *.sh      text eol=lf
-*.patch   text eol=lf
 *.service text eol=lf
 *.md      text eol=lf
 LICENSE   text eol=lf
+
+# Patches must be stored byte for byte. 0003 patches driver sources that are
+# CRLF upstream, so 704 of its context lines end in CR. Normalising those to
+# LF makes the context stop matching and "git apply" fails with "patch does
+# not apply" for everyone who clones, while still looking fine on the machine
+# that generated it.
+*.patch   -text
+
 *.bin     binary
 *.png     binary
 *.tar.gz  binary

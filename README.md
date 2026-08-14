@@ -12,7 +12,7 @@
   <img alt="SoC" src="https://img.shields.io/badge/SoC-Allwinner%20H313-informational">
   <img alt="kernel" src="https://img.shields.io/badge/kernel-7.1.1-blue">
   <img alt="wifi" src="https://img.shields.io/badge/WiFi-working-success">
-  <img alt="licence" src="https://img.shields.io/badge/licence-MIT-lightgrey">
+  <img alt="licence" src="https://img.shields.io/badge/licence-GPL--2.0-lightgrey">
 </p>
 
 <p align="center">
@@ -53,6 +53,7 @@ Hardware-identical boxes this also applies to:
 | WiFi | **AltoBeam ATBM6031**, SDIO `007a:6011`, chip id reports `6032i`. Works, see [Part 5](#part-5-first-boot-wifi-and-ssh). |
 | WiFi antenna | single chain, 1T1R, 2.4 GHz only. No 5 GHz radio on this board. |
 | Bluetooth | present in hardware (combo part), not covered here |
+| MMC numbering | mmc0 unused (no SD slot), mmc1 is the SDIO WiFi, mmc2 is the eMMC and appears as `mmcblk2` |
 
 Note the WiFi part. The device tree in every image floating around calls it
 `smartchip,s9083s`, and that is wrong. The chip only ever answers to SDIO
@@ -97,6 +98,9 @@ Follow either the Linux or the Windows section, not both.
 sudo apt update
 sudo apt install -y sunxi-tools git curl
 ```
+
+That is Debian and Ubuntu. The package is called `sunxi-tools` on Fedora too;
+on Arch it is in the AUR.
 
 Skip ahead to [Part 2](#part-2-install-u-boot-onto-the-box).
 
@@ -545,7 +549,13 @@ pool (high ones like `.50` or `.200` are usually safe).
 The gateway is taken from the current default route. DNS is set to that
 gateway plus `1.1.1.1` as a fallback. Both are written to `/etc/dhcpcd.conf`
 between the `# w01-static` and `# w01-static-end` markers and applied at once.
-It survives reboots.
+It is written to survive reboots.
+
+This is the one step in this guide that was not tested on real hardware. It
+follows dhcpcd's documented mechanism, but if you are working headless, have a
+keyboard and HDMI to hand before running it: it restarts the interface, and if
+the address does not come back you will need the console. `wifi dhcp` undoes
+it.
 
 Back to automatic:
 
@@ -636,16 +646,20 @@ the stick has no pacman. Pacman therefore does not know it owns those files.
 If a later install pulls one of them in as a dependency it will stop with
 `exists in filesystem`. Resolve it by letting pacman take ownership:
 
-```bash
-pacman -S --overwrite '/usr/*' iw wpa_supplicant
-```
-
 Always `-Syu`, never `-Sy` followed by `-S`. A partial upgrade on Arch breaks
 the system sooner or later:
 
 ```bash
 pacman -Syu
 pacman -S wget nano htop fastfetch
+```
+
+If a package pulls in `iw` or `wpa_supplicant` and stops with
+`exists in filesystem`, let pacman take ownership of the files that were
+unpacked onto the stick:
+
+```bash
+pacman -Syu --overwrite '/usr/*' iw wpa_supplicant
 ```
 
 `fastfetch` is a quick way to confirm the system is what you think it is:
@@ -656,22 +670,87 @@ fastfetch
 
 ## Firewall
 
-The box has SSH open with root login. On a home network that is usually fine,
-but a firewall costs nothing:
+The box has SSH open with root login, so a firewall is worth having. `ufw`
+does not work out of the box on this image, and the failure is confusing, so
+read this before running it.
+
+### Point iptables at the legacy backend first
 
 ```bash
 pacman -S ufw
-ufw allow ssh
-ufw enable
-systemctl enable ufw
+for b in iptables iptables-restore iptables-save \
+         ip6tables ip6tables-restore ip6tables-save; do
+    ln -sf xtables-legacy-multi /usr/bin/$b
+done
+printf 'ip_tables\niptable_filter\nip6_tables\nip6table_filter\n' \
+    > /etc/modules-load.d/iptables-legacy.conf
+modprobe ip_tables iptable_filter ip6_tables ip6table_filter
+iptables --version
 ```
 
-`ufw allow ssh` must come before `ufw enable`, or you will lock yourself out
-of your own box the moment the rules load. Check afterwards:
+That last line must say `(legacy)`. Without this step every ufw command fails
+with a wall of errors like:
+
+```
+[Errno 2] iptables v1.8.13 (nf_tables): TABLE_ADD failed (Operation not supported): table filter
+ERROR: problem running ufw-init
+Problem running '/etc/ufw/before.rules'
+```
+
+The reason: Arch ships `/usr/bin/iptables` as a symlink to
+`xtables-nft-multi`, so iptables drives nf_tables. This kernel builds
+`nf_tables` itself but **not the IPv4 or IPv6 families for it**
+(`CONFIG_NF_TABLES_IPV4` is not set, and `nft_chain_filter.ko` and
+`nf_tables_ipv4.ko` are not in `/lib/modules`). You can confirm the kernel is
+at fault rather than ufw:
 
 ```bash
+nft add table ip testtbl
+# Error: Could not process rule: Operation not supported
+```
+
+The legacy netfilter path is fully built and works, which is why switching the
+symlinks fixes it.
+
+### Then enable it
+
+```bash
+ufw allow 22/tcp
+ufw --force enable
+systemctl enable ufw
 ufw status verbose
 ```
+
+`ufw allow 22/tcp` must come **before** enabling, or you lock yourself out of
+your own box the moment the rules load. If you are working over SSH rather
+than at the keyboard, give yourself an undo before enabling anything:
+
+```bash
+setsid nohup sh -c "sleep 300; ufw --force disable" >/dev/null 2>&1 &
+```
+
+That turns the firewall back off after five minutes whether or not you are
+still connected. Kill it with `pkill -f "sleep 300"` once you have confirmed
+you can still get in.
+
+A working result looks like this:
+
+```
+Status: active
+Default: deny (incoming), allow (outgoing), disabled (routed)
+
+To                         Action      From
+--                         ------      ----
+22/tcp                     ALLOW IN    Anywhere
+22/tcp (v6)                ALLOW IN    Anywhere (v6)
+```
+
+Ping still works afterwards: ufw's default rules accept ICMP echo.
+
+**One thing to watch.** Those symlinks belong to the `iptables` package, so a
+future `pacman -Syu` that upgrades it will point them back at nft and ufw will
+break again with the same errors. If that happens, re-run the symlink loop
+above. Nothing else is lost, your rules are kept in `/etc/ufw`.
 
 ## Optional tidying
 
@@ -693,7 +772,7 @@ pacman -Sc
 wifi                     status and IP address
 wifi scan                list nearby networks
 wifi connect             pick a network and save it
-wifi static 192.0.2.50  pin a static IP, survives reboot
+wifi static 192.0.2.50  pin a static IP (defaults to /24)
 wifi dhcp                back to automatic addressing
 wifi forget              remove the saved network
 ```
@@ -709,7 +788,7 @@ See [Part 5 Step 6](#step-6-give-it-a-fixed-address-optional) for what
 |---|---|
 | `No wireless interface found` | Driver did not load. `dmesg \| grep -i atbm \| tail`. |
 | Interface exists, will not come up | Almost always a **warm reboot**. Pull the power for 30 seconds. See below. |
-| `mmc1: error -5 whilst initialising SDIO card` | Same thing. The chip did not re-enumerate. Cold boot. |
+| `mmc1: error -5 whilst initialising SDIO card`, or `Card stuck being busy` | Same thing. The chip did not re-enumerate. Cold boot. |
 | Connects, then drops repeatedly | You are on an older driver build. Use the one in the release. |
 | `cfg80211: failed to load regulatory.db` | Harmless. |
 
@@ -717,8 +796,8 @@ See [Part 5 Step 6](#step-6-give-it-a-fixed-address-optional) for what
 
 **This chip only initialises from a cold power-on.** After any `rmmod`, warm
 `reboot`, or a driver crash, it stays in whatever state it was left in and
-`mmc1` fails to re-enumerate it, because `reg_vcc_wifi` is
-`regulator-always-on` and rebooting Linux never drops its power rail.
+`mmc1` fails to re-enumerate it. Rebooting Linux does not power-cycle the
+chip. Only removing power does.
 
 If WiFi is missing after a reboot, pull the power cord for 30 seconds. This is
 not a suggestion, it is the single most common cause of "it stopped working"
@@ -733,8 +812,13 @@ If you want Android back, or something went wrong:
 1. Download the stock firmware,
    [`Wudung_W01_20250616_1449.rar`](https://github.com/MultiX0/wudung-w01-linux/releases/download/v1.0/Wudung_W01_20250616_1449.rar),
    and extract the `.img` file inside it.
-2. Install PhoenixSuit on a Windows PC. The installer, `PhoenixSuit_EN.msi`, is
-   available at <https://legione.name/upload/?dir=Smart-TV-Box/Q1/>
+2. Install PhoenixSuit on a Windows PC. PhoenixSuit is Allwinner's own
+   flashing tool, not part of this project. There is no official download, so
+   the copy used here came from a third-party mirror,
+   <https://legione.name/upload/?dir=Smart-TV-Box/Q1/> (`PhoenixSuit_EN.msi`).
+   It is an unsigned installer from a personal file host: check it against
+   your own antivirus before running it, or source it from somewhere you
+   trust more. Nothing else in this guide needs it.
 3. Open PhoenixSuit, go to the Firmware tab, and select the `.img` file.
 4. Put the box into FEL mode using the same toothpick procedure as above.
 5. PhoenixSuit detects the box and offers to flash it. Accept.
@@ -947,7 +1031,8 @@ Use the WiFi-only one.
 | Firmware header magic | Stock blob starts `x654`, the driver only accepted `w654` | Compare with the low nibble masked off, so both are accepted |
 | 40 MHz on 2.4 GHz | Unstable, poor rates | Force HT20. Single-chain part, 40 MHz buys nothing |
 | Firmware power save | `wsm_power_mode_quiescent` sent at init | Set `wsm_power_mode_active`. Mains-powered box |
-| Beacon-loss threshold 20 | Firmware declared the AP lost after 2 s with the AP one metre away | Raised to 60 |
+| Beacon-loss threshold 20 | Firmware declared the AP lost after 2 s with the AP one metre away | Raised to 60, and the link-loss count from 40 to 100 |
+| Firmware rejects MIB `0x1024` | `wsm_use_multi_tx_conf` fails, which aborted probe entirely | Treat it as non-fatal: this firmware does not support multi-TX-confirm |
 | **`BSS_LOST` tore the link down instantly** | 35-70% packet loss | Debounced, see below |
 
 The last one was the real cause of the packet loss, and it is worth
@@ -968,10 +1053,37 @@ BH suspend logic, which take a spinlock on invalid memory and panic the kernel
 during module init, leaving the box unbootable. The fix is the debounce, which
 keeps that code out of the picture.
 
+### Porting a 4.9 driver to Linux 7.1
+
+Most of `patches/0003` is not the W01 fixes above, it is this. The driver was
+written for Linux 4.9 and carries its own copy of mac80211, so both had to be
+moved forward. This is the part to read if you ever rebuild for a newer
+kernel, because the same kind of breakage will happen again:
+
+| Was | Now | Why |
+|---|---|---|
+| `EXTRA_CFLAGS` | `ccflags-y` | kbuild dropped the old name |
+| `del_timer()` | `timer_delete()` | timer API rename |
+| `from_timer()` | `timer_container_of()` | same rename |
+| `wdev->mtx` | `wiphy_lock()` | the per-wdev mutex is gone |
+| cfg80211_ops taking `net_device` | `wireless_dev`, plus `link_id` and `radio_idx` arguments | multi-link support changed nearly every op |
+| `station_parameters` | `link_sta_params` | station parameters are per-link now |
+| `prandom_u32()` | `get_random_u32()` | removed |
+| `asm/unaligned.h` | `linux/unaligned.h` | header moved |
+
+And one genuine upstream bug, which is not a kernel change at all. The
+driver's `Makefile` reads its own `.config` through `$(src)`, but `$(src)` is
+empty on the top-level invocation. The config was therefore never read, so
+`-DSDIO_BUS` was silently dropped and the SDIO bus support was compiled out of
+a driver whose only bus is SDIO. It is fixed by resolving the directory from
+`$(lastword $(MAKEFILE_LIST))` instead.
+
 Things that looked like the cause and were not, each disproved by measurement:
 
 * **Power save at the mac80211 layer.** Removing `IEEE80211_HW_SUPPORTS_PS`
-  changed nothing, because the sleep was commanded a level lower.
+  changed nothing measurable, because the sleep was being commanded a level
+  lower. The removal was kept anyway, since this box is mains powered and
+  nothing wants the radio asleep, but it was not the fix.
 * **Block-ack / aggregation.** Setting `ampdu=0` collapsed the link to
   1 Mbit/s and did not reduce loss. The repeated `ADDBA` requests were a
   symptom, not a cause.
@@ -993,7 +1105,8 @@ Things that looked like the cause and were not, each disproved by measurement:
 * **The WiFi chip needs a cold power cycle**, see [the cold boot
   rule](#the-cold-boot-rule).
 * No U-Boot console output at all, so the screen stays black until the kernel
-  starts. This is normal. It is also why boot problems are debugged with
+  starts. This build has `CONFIG_VIDEO` unset and the board has no usable
+  UART, so there is nowhere for it to print. This is normal. It is also why boot problems are debugged with
   `scripts/fel-emmc.py` rather than by guessing.
 * `BUG: Bad page state in process swapper` appears at `[0.000000]` on boot. It
   is harmless and the system runs fine afterwards.

@@ -31,7 +31,11 @@ cd u-boot
 git checkout -- . 2>/dev/null || true
 git clean -fdq 2>/dev/null || true
 
-git apply "$HERE/../patches/0001-apritzel-h616-32bit-build.patch"
+# Only 0002. It is a complete diff against pristine v2025.07 and already
+# contains everything in 0001 (the 32-bit build hack), which is kept in the
+# repo for attribution rather than to be applied. Applying 0001 first makes
+# 0002 fail with "patch does not apply" on all four files, and because
+# git apply is atomic you end up with a half-patched tree.
 git apply "$HERE/../patches/0002-fel-emmc-tool.patch"
 
 make tanix_tx1_defconfig

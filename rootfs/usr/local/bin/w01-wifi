@@ -6,6 +6,9 @@
 #   w01-wifi scan            list nearby networks
 #   w01-wifi connect         interactive: pick SSID, enter password, save
 #   w01-wifi static <ip>     pin a static address, e.g. w01-wifi static 192.0.2.50
+#                            (defaults to /24; append /prefix to change it)
+#                            Untested on a headless box: keep a keyboard and
+#                            HDMI to hand, and use 'w01-wifi dhcp' to undo.
 #   w01-wifi dhcp            go back to DHCP
 #   w01-wifi forget          remove the saved network
 #
@@ -167,6 +170,8 @@ forget)
     rm -f "$CONF"
     systemctl disable "wpa_supplicant@$W" >/dev/null 2>&1
     systemctl stop "wpa_supplicant@$W"    >/dev/null 2>&1
+    systemctl disable "dhcpcd@$W"         >/dev/null 2>&1
+    systemctl stop "dhcpcd@$W"            >/dev/null 2>&1
     echo "saved network removed"
     ;;
 

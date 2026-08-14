@@ -22,9 +22,13 @@ if [ -z "$KHDR" ]; then
     cat <<'EOF'
 Set KHDR to the kernel build tree that matches the box.
 
-For the MiniArch 7.1.1 image used here, the headers package is:
-  https://raw.githubusercontent.com/warpme/miniarch/master/...-linux-aarch64-headers-7.1.1-1-any.pkg.tar.gz
-unpack it and point KHDR at usr/lib/modules/7.1.1/build
+Take the linux-aarch64-headers package from the SAME MiniArch release as the
+image you installed (the releases page lists it next to the SD-Image asset):
+
+  https://github.com/warpme/miniarch/releases
+
+  mkdir khdr && tar xf linux-aarch64-headers-<ver>-any.pkg.tar.* -C khdr
+  KHDR=$PWD/khdr/usr/lib/modules/<ver>/build ./build-atbm-driver.sh
 
 The module must be built against the exact kernel it will load into:
 vermagic is checked at insmod time.

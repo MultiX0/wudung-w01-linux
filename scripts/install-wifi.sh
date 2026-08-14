@@ -107,4 +107,6 @@ echo
 echo "    wifi connect"
 echo
 echo "After that it reconnects by itself on every boot."
-echo "Reboot once to confirm the driver loads cleanly at startup."
+echo "To confirm it survives a restart, power the box off at the wall and"
+echo "back on. Do NOT use reboot: this chip only initialises from a cold"
+echo "power-on, and a warm reboot leaves it wedged."
