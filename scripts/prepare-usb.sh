@@ -100,8 +100,17 @@ echo "blacklist s9083s" > "$MR/etc/modprobe.d/blacklist-s9083s.conf"
 install -d "$MR/etc/modules-load.d"
 echo "atbm603x_wifi_sdio" > "$MR/etc/modules-load.d/atbm.conf"
 
-# rebuild the module dependency map inside the target tree
-depmod -b "$MR" "$KVER" 2>/dev/null || echo "  (depmod skipped, the box will run it)"
+# Rebuild the module dependency map inside the target tree. This is not
+# optional: systemd-modules-load runs "modprobe atbm603x_wifi_sdio" at boot,
+# and modprobe needs modules.dep to find a module in extramodules. Nothing on
+# the box runs depmod for us, so if this fails the WiFi silently does not come
+# up on first boot.
+depmod -b "$MR" "$KVER" || {
+	echo
+	echo "ERROR: depmod failed. Without it the driver will not load on the box."
+	echo "Install kmod on this PC and re-run."
+	exit 1
+}
 
 echo "=== 4/5 userspace ==="
 # .pkg.tar.xz is a plain tar, so the payload can be unpacked directly without
@@ -139,7 +148,21 @@ if [ -f "$MR/usr/lib/systemd/system/sshd.service" ]; then
 	install -d "$MR/etc/systemd/system/multi-user.target.wants"
 	ln -sf /usr/lib/systemd/system/sshd.service \
 		"$MR/etc/systemd/system/multi-user.target.wants/sshd.service"
+	SSH_OK=yes
+else
+	SSH_OK=no
 fi
+
+# The box has no network until wifi connect runs, so anything missing here
+# cannot be installed later without a USB ethernet adapter. Say so now, on the
+# PC, while it is still cheap to fix, rather than letting the user find out on
+# a box they cannot reach.
+MISSING=""
+[ -x "$MR/usr/bin/iw" ]              || MISSING="$MISSING iw"
+[ -x "$MR/usr/bin/wpa_supplicant" ]  || MISSING="$MISSING wpa_supplicant"
+[ -x "$MR/usr/bin/wpa_passphrase" ]  || MISSING="$MISSING wpa_passphrase"
+[ -x "$MR/usr/bin/dhcpcd" ]          || MISSING="$MISSING dhcpcd"
+[ "$SSH_OK" = yes ]                  || MISSING="$MISSING openssh"
 
 echo "=== 5/5 eMMC installer ==="
 install -Dm755 "$REPO/emmc-install/install-to-emmc.sh" \
@@ -153,6 +176,19 @@ ls -l "$MR/etc/systemd/system/multi-user.target.wants/install-to-emmc.service"
 
 sync
 echo
+
+if [ -n "$MISSING" ]; then
+	echo "=============================================================="
+	echo " WARNING: these are missing from the stick's root filesystem:"
+	echo "    $MISSING"
+	echo
+	echo " The box will have no way to install them, because it has no"
+	echo " network until WiFi works. Add the matching aarch64 packages to"
+	echo " pkgs/ in the WiFi bundle and run this again."
+	echo "=============================================================="
+	exit 1
+fi
+
 echo "=============================================================="
 echo " Stick is ready."
 echo

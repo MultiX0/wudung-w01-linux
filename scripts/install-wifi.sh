@@ -50,7 +50,7 @@ if [ -d "$HERE/pkgs" ] && ls "$HERE/pkgs"/*.pkg.tar.* >/dev/null 2>&1; then
 fi
 
 # Check everything that is actually needed later, not just the two we bundle.
-# dhcpcd is what gets an address, sshd is what Part 5 Step 3 promises.
+# dhcpcd is what gets an address, sshd is what Part 5 Step 5 promises.
 MISSING=""
 for b in iw wpa_supplicant wpa_passphrase dhcpcd sshd; do
     command -v "$b" >/dev/null 2>&1 || MISSING="$MISSING $b"

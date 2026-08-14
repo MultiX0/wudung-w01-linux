@@ -26,8 +26,8 @@
 ---
 
 No SD card slot, no SPI flash, no exposed UART, and a single USB port that is
-the only way in. That combination is why there was no working recipe for this
-box before. This repository is that recipe, including working WiFi.
+the only way in. That combination is why the usual Allwinner recipes do not
+apply to this box. This repository is one that does, including working WiFi.
 
 **Where to get one:** this was developed on a Wudung W01 bought from
 [this exact Temu listing](https://share.temu.com/7g4eht8xY2B). Any of the
@@ -282,6 +282,9 @@ usbipd bind --busid 1-1
 usbipd attach --wsl --busid 1-1
 ```
 
+Replace `1-1` with the BUSID that `usbipd list` shows for the flash drive. It
+is a different device from the box, so it has a different BUSID.
+
 Now find the drive in Linux:
 
 ```bash
@@ -361,8 +364,9 @@ finishes with `Stick is ready.`
 
 The stick boots Linux and immediately installs it onto the eMMC. You do not
 need a keyboard: it formats two eMMC partitions, copies the whole system
-across including the WiFi driver, disables itself on the stick so it can never
-run again by accident, and then **switches the box off** when it is done.
+across including the WiFi driver, disables itself on the stick once the copy
+has succeeded so a stick left plugged in cannot wipe the new install, and then
+**switches the box off** when it is done.
 
 That takes a few minutes, and the box powering itself off is the signal that
 it worked.
@@ -400,9 +404,12 @@ alarm login:
 
 log in as `root`, password `root`.
 
-SSH is enabled and root login is permitted, so the box is reachable from
-anything on your network the moment it has an address. Change the password
-before that happens:
+SSH is enabled and root login is permitted, both set up in Part 3. If
+`prepare-usb.sh` had found `openssh` missing from the image it would have
+stopped and told you, so if it printed `Stick is ready.` this is in place.
+
+That means the box is reachable from anything on your network the moment it
+has an address. Change the password before that happens:
 
 ```bash
 passwd
@@ -469,7 +476,7 @@ interface : wld0
   freq: 2447.0
   signal: -61 dBm
   rx bitrate: 19.5 MBit/s MCS 2
-  tx bitrate: 65.0 MBit/s MCS 7
+  tx bitrate: 1.0 MBit/s
 
   IP address: 192.0.2.8
   ssh root@192.0.2.8
@@ -499,8 +506,9 @@ Reading the output:
 | `Network is unreachable` | no address at all, treat as the "no IP" row |
 
 Some packet loss on `ping` is expected on this hardware, see
-[Known issues](#known-issues). TCP absorbs it, so SSH and `pacman` are
-reliable even when `ping` looks poor.
+[Known issues](#known-issues). The low `tx bitrate` above is real and is the
+open problem described there. TCP tolerates it: in testing SSH connected on
+every attempt, though handshakes took anywhere from 0.4 to 5.5 seconds.
 
 ## Step 5. SSH in from your PC
 
@@ -524,9 +532,12 @@ wifi static 192.0.2.50
 
 Pick an address on your own network: keep the first three numbers the same as
 the one DHCP gave you, and choose a last number outside your router's DHCP
-pool (high ones like `.50` or `.200` are usually safe). The gateway and DNS
-are taken from the current connection, written to `/etc/dhcpcd.conf` between
-`# w01-static` markers, and applied at once. It survives reboots.
+pool (high ones like `.50` or `.200` are usually safe).
+
+The gateway is taken from the current default route. DNS is set to that
+gateway plus `1.1.1.1` as a fallback. Both are written to `/etc/dhcpcd.conf`
+between the `# w01-static` and `# w01-static-end` markers and applied at once.
+It survives reboots.
 
 Back to automatic:
 
@@ -672,8 +683,7 @@ wifi forget              remove the saved network
 `myip` prints the current addresses.
 
 See [Part 5 Step 6](#step-6-give-it-a-fixed-address-optional) for what
-`wifi static` actually writes, and [Part 6](#part-6-best-practices-after-the-install)
-for package management and the firewall.
+`wifi static` writes.
 
 ## WiFi troubleshooting
 
@@ -714,8 +724,9 @@ If you want Android back, or something went wrong:
 This rewrites the whole eMMC, so it undoes everything in this guide.
 
 The box is very hard to brick permanently. FEL mode lives in mask ROM inside
-the SoC and cannot be erased by anything you write to the eMMC, so the toothpick
-recovery always works.
+the SoC and cannot be erased by anything you write to the eMMC, so the
+toothpick recovery has brought back every failure seen while writing this,
+including a box that crashed on every boot with an unusable console.
 
 ---
 
@@ -913,9 +924,9 @@ Use the WiFi-only one.
 | Fault | Symptom | Fix |
 |---|---|---|
 | Firmware retry loop unbounded | `modprobe` never returns, hangs forever | Bound to 2 attempts, return `-ETIMEDOUT` |
-| `BUG_ON(NumOfStations > 14)` | Kernel panic the moment the handshake succeeded | Clamp instead of panic. This firmware reports `Config[0]=0x08030408`, which the driver decodes as 1032 stations |
+| `BUG_ON` on the station count | Kernel panic the moment the handshake succeeded | Clamp to `ATBMWIFI_MAX_STA_IN_AP_MODE` instead of panicking. This firmware reports `Config[0]=0x08030408`, which the driver decodes as 1032 stations |
 | Driver writes `netdev->dev_addr` directly | `ip link set up` fails with `-EINVAL`, interface can never come up | `dev_addr_set()`. Linux 5.17+ keeps a shadow copy and `__dev_open()` refuses a mismatch |
-| Firmware header magic | Stock blob is `x654`, driver only accepts `w654` | Accept both |
+| Firmware header magic | Stock blob starts `x654`, the driver only accepted `w654` | Compare with the low nibble masked off, so both are accepted |
 | 40 MHz on 2.4 GHz | Unstable, poor rates | Force HT20. Single-chain part, 40 MHz buys nothing |
 | Firmware power save | `wsm_power_mode_quiescent` sent at init | Set `wsm_power_mode_active`. Mains-powered box |
 | Beacon-loss threshold 20 | Firmware declared the AP lost after 2 s with the AP one metre away | Raised to 60 |
@@ -961,17 +972,18 @@ Things that looked like the cause and were not, each disproved by measurement:
   SSH, package installs and general use, and it is not yet as fast as the
   hardware should manage. The firmware's rate control pinning transmit at
   1 Mbit/s is the remaining suspect and is not solved.
-* **The WiFi chip needs a cold power cycle.** See [the cold boot
-  rule](#the-cold-boot-rule). Never `rmmod` this driver.
-* No U-Boot console output. U-Boot has no HDMI driver on the H616, so the
-  screen stays black until the kernel starts. This is normal, and it is also
-  why debugging boot problems needs `scripts/fel-emmc.py` rather than guesswork.
+* **The WiFi chip needs a cold power cycle**, see [the cold boot
+  rule](#the-cold-boot-rule).
+* No U-Boot console output at all, so the screen stays black until the kernel
+  starts. This is normal. It is also why boot problems are debugged with
+  `scripts/fel-emmc.py` rather than by guessing.
 * `BUG: Bad page state in process swapper` appears at `[0.000000]` on boot. It
   is harmless and the system runs fine afterwards.
 * `cfg80211: failed to load regulatory.db` is harmless. Install
   `wireless-regdb` if you want it gone.
-* There is only one USB port. A hub is required, see
-  [What you need](#what-you-need).
+* There is only one USB port. Nothing in this guide needs two devices
+  attached at once, but you cannot have the stick and a keyboard in together,
+  so a hub is convenient.
 
 ---
 
@@ -1005,6 +1017,11 @@ sudo ./scripts/fel-emmc.py patch 7 /extlinux/extlinux.conf \
 
 If the lengths do not match, pad the shorter one with trailing spaces. The
 tool refuses the write rather than corrupting the file.
+
+Note what this costs you: the replacement drops `console=tty0`, so the screen
+goes blank on the next boot. That is usually an acceptable trade to get a
+bootable box back, and once it boots you can run the same command with the two
+strings swapped to put the console back.
 
 Use `module_blacklist=` (a kernel parameter, enforced inside `load_module()`),
 not `modprobe.blacklist=`. The latter only suppresses alias-based autoloading
