@@ -164,6 +164,38 @@ for b in iptables iptables-restore iptables-save \
 		ln -sf xtables-legacy-multi "$MR/usr/bin/$b"
 done
 
+
+# --- kernel pin, verified not assumed ---------------------------------------
+# The WiFi driver is out-of-tree and built against exactly $KVER; the kernel
+# checks vermagic at load time. A "pacman -Syu" that pulled a newer
+# linux-aarch64 would leave the box with no driver, and WiFi is its only remote
+# link, so that would need a keyboard and a screen to recover.
+# MiniArch already pins the kernel in /etc/pacman.conf, so this is only a
+# backstop in case a future image drops it. Checked, not assumed.
+if [ -f "$MR/etc/pacman.conf" ]; then
+	if grep -q '^IgnorePkg.*linux-aarch64' "$MR/etc/pacman.conf"; then
+		echo "  kernel already pinned by the base image, leaving it alone"
+	else
+		echo "  base image does not pin the kernel, adding the pin"
+		if grep -q '^IgnorePkg' "$MR/etc/pacman.conf"; then
+			sed -i 's/^IgnorePkg.*/& linux-aarch64 linux-aarch64-api-headers/' \
+				"$MR/etc/pacman.conf"
+		else
+			sed -i '/^\[options\]/a IgnorePkg = linux-aarch64 linux-aarch64-api-headers' \
+				"$MR/etc/pacman.conf"
+		fi
+		# never trust a sed that had to find an anchor
+		grep -q '^IgnorePkg.*linux-aarch64' "$MR/etc/pacman.conf" || {
+			echo
+			echo "ERROR: could not pin the kernel in /etc/pacman.conf."
+			echo "Without the pin, a later 'pacman -Syu' silently kills WiFi."
+			exit 1
+		}
+	fi
+else
+	echo "  warning: no /etc/pacman.conf in the target, kernel not pinned"
+fi
+
 install -d "$MR/etc/profile.d"
 cat > "$MR/etc/profile.d/w01.sh" <<'EOF'
 # Wudung W01 convenience

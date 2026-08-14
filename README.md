@@ -654,6 +654,27 @@ pacman -Syu
 pacman -S wget nano htop fastfetch
 ```
 
+### Do not upgrade the kernel
+
+The WiFi driver is an out-of-tree module built against exactly the running
+kernel, and the kernel checks `vermagic` when loading it. Upgrade the kernel and
+the module stops loading, which on this box means losing WiFi, which is the only
+way in. Recovering from that needs a USB keyboard and a screen.
+
+MiniArch already guards this: `/etc/pacman.conf` ships with
+
+```
+IgnorePkg = linux-aarch64 linux-aarch64-api-headers ... linux-firmware
+```
+
+so `pacman -Syu` skips the kernel and prints `skipping package linux-aarch64`.
+That warning is correct, leave it alone. `scripts/prepare-usb.sh` checks the pin
+is present and only adds one if a future image drops it.
+
+To upgrade the kernel on purpose, remove `linux-aarch64` from `IgnorePkg`,
+upgrade, then rebuild the driver against the new kernel using
+[Building from source](#building-from-source) before rebooting.
+
 If a package pulls in `iw` or `wpa_supplicant` and stops with
 `exists in filesystem`, let pacman take ownership of the files that were
 unpacked onto the stick:
