@@ -1,0 +1,152 @@
+#!/bin/sh
+#
+# w01-wifi - connect the Wudung W01 built-in WiFi, and keep it connected.
+#
+#   w01-wifi                 show status and IP
+#   w01-wifi scan            list nearby networks
+#   w01-wifi connect         interactive: pick SSID, enter password, save
+#   w01-wifi static <ip>     pin a static address, e.g. w01-wifi static 192.0.2.50
+#   w01-wifi dhcp            go back to DHCP
+#   w01-wifi forget          remove the saved network
+#
+# The saved network is reconnected automatically on every boot and whenever
+# the link drops - that is handled by wpa_supplicant@<iface> and dhcpcd@<iface>,
+# which this script enables for you.
+set -u
+
+iface() {
+    for d in /sys/class/net/*/wireless; do
+        [ -e "$d" ] && basename "$(dirname "$d")" && return 0
+    done
+    return 1
+}
+
+W=$(iface || true)
+if [ -z "${W:-}" ]; then
+    echo "No wireless interface found."
+    echo
+    echo "  driver loaded? :  lsmod | grep atbm"
+    echo "  driver errors? :  dmesg | grep -i atbm | tail"
+    echo "  firmware here? :  ls -l /lib/firmware/atbm_fw.bin"
+    exit 1
+fi
+
+CONF="/etc/wpa_supplicant/wpa_supplicant-$W.conf"
+
+show_status() {
+    echo "interface : $W"
+    if iw dev "$W" link 2>/dev/null | grep -q "Connected to"; then
+        iw dev "$W" link | sed -n 's/^\s*/  /p' | head -8
+    else
+        echo "  not connected"
+    fi
+    IP=$(ip -4 addr show "$W" 2>/dev/null | sed -n 's/.*inet \([0-9.]*\).*/\1/p' | head -1)
+    echo
+    if [ -n "$IP" ]; then
+        echo "  IP address: $IP"
+        echo "  ssh root@$IP"
+    else
+        echo "  no IP address"
+    fi
+}
+
+case "${1:-status}" in
+status)
+    show_status
+    ;;
+
+scan)
+    ip link set "$W" up 2>/dev/null
+    sleep 2
+    iw dev "$W" scan 2>/dev/null | sed -n 's/^[[:space:]]*SSID: //p' | sort -u | grep -v '^$'
+    ;;
+
+connect)
+    ip link set "$W" up 2>/dev/null
+    sleep 2
+    echo "Nearby networks:"
+    iw dev "$W" scan 2>/dev/null | sed -n 's/^[[:space:]]*SSID: //p' | sort -u | grep -v '^$' | sed 's/^/  /'
+    echo
+    printf "SSID: "
+    read SSID
+    [ -n "$SSID" ] || { echo "no SSID given"; exit 1; }
+    printf "Password (leave empty for an open network): "
+    stty -echo 2>/dev/null
+    read PASS
+    stty echo 2>/dev/null
+    echo
+
+    mkdir -p /etc/wpa_supplicant
+    if [ -z "$PASS" ]; then
+        {
+            echo "network={"
+            echo "  ssid=\"$SSID\""
+            echo "  key_mgmt=NONE"
+            echo "}"
+        } > "$CONF"
+    else
+        wpa_passphrase "$SSID" "$PASS" > "$CONF" || exit 1
+    fi
+    unset PASS
+    chmod 600 "$CONF"
+
+    systemctl enable "wpa_supplicant@$W" >/dev/null 2>&1
+    systemctl enable "dhcpcd@$W"         >/dev/null 2>&1
+    systemctl restart "wpa_supplicant@$W"
+    echo "associating..."
+    i=0
+    while [ $i -lt 20 ]; do
+        iw dev "$W" link 2>/dev/null | grep -q "Connected to" && break
+        sleep 1; i=$((i+1))
+    done
+    systemctl restart "dhcpcd@$W"
+    echo "requesting address..."
+    i=0
+    while [ $i -lt 20 ]; do
+        ip -4 addr show "$W" | grep -q "inet " && break
+        sleep 1; i=$((i+1))
+    done
+    echo
+    show_status
+    ;;
+
+static)
+    ADDR="${2:-}"
+    [ -n "$ADDR" ] || { echo "usage: w01-wifi static <ip>[/prefix]"; exit 1; }
+    case "$ADDR" in */*) ;; *) ADDR="$ADDR/24" ;; esac
+    GW=$(ip route show default | awk '{print $3; exit}')
+    [ -n "$GW" ] || GW=$(echo "$ADDR" | sed 's#\([0-9]*\.[0-9]*\.[0-9]*\)\..*#\1.1#')
+    sed -i "/^# w01-static/,/^# w01-static-end/d" /etc/dhcpcd.conf 2>/dev/null
+    {
+        echo "# w01-static"
+        echo "interface $W"
+        echo "static ip_address=$ADDR"
+        echo "static routers=$GW"
+        echo "static domain_name_servers=$GW 1.1.1.1"
+        echo "# w01-static-end"
+    } >> /etc/dhcpcd.conf
+    systemctl restart "dhcpcd@$W"
+    sleep 5
+    echo "static address configured (survives reboot)"
+    echo
+    show_status
+    ;;
+
+dhcp)
+    sed -i "/^# w01-static/,/^# w01-static-end/d" /etc/dhcpcd.conf 2>/dev/null
+    systemctl restart "dhcpcd@$W"
+    sleep 5
+    show_status
+    ;;
+
+forget)
+    rm -f "$CONF"
+    systemctl disable "wpa_supplicant@$W" >/dev/null 2>&1
+    systemctl stop "wpa_supplicant@$W"    >/dev/null 2>&1
+    echo "saved network removed"
+    ;;
+
+*)
+    sed -n '3,14p' "$0" | sed 's/^# \{0,1\}//'
+    ;;
+esac

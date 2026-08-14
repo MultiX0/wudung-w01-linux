@@ -23,10 +23,18 @@ Hardware-identical boxes this also applies to:
 | Storage | eMMC only, about 15 GiB. No SD slot. No SPI flash. |
 | USB | One USB 2.0 type-A port, which is also the FEL recovery port |
 | PMIC | AXP313 |
-| WiFi | SCI S9082H, needs an out-of-tree driver, does not work yet |
+| WiFi | **AltoBeam ATBM6031**, SDIO `007a:6011`, chip id reports `6032i`. Works, see [Part 5](#part-5-wifi-and-ssh). |
+| WiFi antenna | single chain, 1T1R, 2.4 GHz only. No 5 GHz radio on this board. |
+| Bluetooth | present in hardware (combo part), not covered here |
+
+Note the WiFi part. The device tree in every image floating around calls it
+`smartchip,s9083s`, and that is wrong. The chip only ever answers to SDIO
+vendor `0x007a`, which is AltoBeam. Believing the device tree instead of the
+bus cost hours, and the `s9083s` driver has to be removed or it claims the
+device and the real driver never sees it.
 
 End result: Arch Linux ARM booting from eMMC to a login prompt on HDMI, with
-the USB port free for a keyboard.
+working WiFi, SSH, and the USB port free for a keyboard.
 
 **Warning.** This replaces the Android bootloader on the eMMC, so Android will
 stop booting. You can put it back, see [Restoring stock
@@ -147,10 +155,11 @@ Windows), unless it says PowerShell.
 
 ```bash
 mkdir -p ~/w01 && cd ~/w01
-curl -LO https://github.com/MultiX0/wudung-w01-linux/releases/download/v1.0/sunxi-spl-fel-installer.bin
-curl -LO https://github.com/MultiX0/wudung-w01-linux/releases/download/v1.0/u-boot-sunxi-with-spl-toc0.bin
 git clone https://github.com/MultiX0/wudung-w01-linux.git
 ```
+
+The binaries you need are in `wudung-w01-linux/prebuilt/`, so cloning is
+enough. They are also attached to the Releases page if you prefer.
 
 ## Step 2. Put the box into FEL mode
 
@@ -184,8 +193,11 @@ step.
 ```bash
 cd ~/w01/wudung-w01-linux/scripts
 chmod +x fel-install-uboot.sh
-./fel-install-uboot.sh ~/w01/sunxi-spl-fel-installer.bin ~/w01/u-boot-sunxi-with-spl-toc0.bin
+./fel-install-uboot.sh
 ```
+
+With no arguments it uses the binaries in `../prebuilt/`, which is what you
+want. Pass paths explicitly only if you built your own.
 
 Wait for this line:
 
@@ -314,6 +326,136 @@ keyboard.
 
 ---
 
+# Part 5: WiFi and SSH
+
+Log in as `root` (password `root` on the stock MiniArch image; change it with
+`passwd`).
+
+## Step 1. Install the WiFi bundle
+
+Download `w01-wifi-v1.1.tar.gz` from the
+[Releases page](https://github.com/MultiX0/wudung-w01-linux/releases) onto the
+USB stick from your PC, then on the box:
+
+```bash
+mount -L BOOT /mnt
+tar xf /mnt/w01-wifi-v1.1.tar.gz -C /root
+cd /root/w01-wifi-v1.1
+./install-wifi.sh
+```
+
+That installs the driver, the firmware, `iw`, `wpa_supplicant`, `openssh`, the
+`wifi` command, and enables everything at boot. It is safe to re-run.
+
+The bundle carries `iw` and `wpa_supplicant` as offline packages because the
+MiniArch image does not ship them, and you cannot download them before you
+have WiFi. That chicken-and-egg is the reason the bundle exists.
+
+## Step 2. Connect
+
+```bash
+wifi connect
+```
+
+It scans, asks for the SSID and the password (hidden as you type), saves it,
+connects, and prints the IP address.
+
+That is the only manual step. From then on it reconnects **automatically** on
+every boot and whenever the link drops, because `wpa_supplicant@wld0` and
+`dhcpcd@wld0` are enabled as systemd services.
+
+## Step 3. SSH in
+
+The installer enables `sshd`. From your PC:
+
+```bash
+ssh root@<the IP it printed>
+```
+
+The address is also shown on the login screen before you log in, so a headless
+box tells you where it is.
+
+To allow root login over SSH, if you have not already:
+
+```bash
+echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config
+systemctl restart sshd
+```
+
+## The `wifi` command
+
+```
+wifi                     status and IP address
+wifi scan                list nearby networks
+wifi connect             pick a network and save it
+wifi static 192.0.2.50  pin a static IP, survives reboot
+wifi dhcp                back to automatic addressing
+wifi forget              remove the saved network
+```
+
+`myip` prints the current addresses.
+
+## Static IP
+
+```bash
+wifi static 192.0.2.50
+```
+
+The gateway and DNS are taken from the current default route, written to
+`/etc/dhcpcd.conf` between `# w01-static` markers, and applied immediately.
+It survives reboots. `wifi dhcp` removes it again.
+
+## Installing packages
+
+The image ships a package database older than the mirror, so a plain
+`pacman -S something` fails with **404**, not a timeout. Refresh and upgrade
+first, and always together:
+
+```bash
+pacman -Syu
+```
+
+Then install what you want:
+
+```bash
+pacman -S wget ufw nano htop
+```
+
+Never run `pacman -Sy` followed by `pacman -S`. On Arch that produces a
+partial upgrade and breaks the system sooner or later. `-Syu` or nothing.
+
+A basic firewall, if you want one:
+
+```bash
+pacman -S ufw
+ufw allow ssh
+ufw enable
+systemctl enable ufw
+```
+
+## WiFi troubleshooting
+
+| Symptom | Cause and fix |
+|---|---|
+| `No wireless interface found` | Driver did not load. `dmesg \| grep -i atbm \| tail`. |
+| Interface exists, will not come up | Almost always a **warm reboot**. Pull the power for 30 seconds. See below. |
+| `mmc1: error -5 whilst initialising SDIO card` | Same thing. The chip did not re-enumerate. Cold boot. |
+| Connects, then drops repeatedly | You are on an older driver build. Use the one in the release. |
+| `cfg80211: failed to load regulatory.db` | Harmless. |
+
+### The cold boot rule
+
+**This chip only initialises from a cold power-on.** After any `rmmod`, warm
+`reboot`, or a driver crash, it stays in whatever state it was left in and
+`mmc1` fails to re-enumerate it, because `reg_vcc_wifi` is
+`regulator-always-on` and rebooting Linux never drops its power rail.
+
+If WiFi is missing after a reboot, pull the power cord for 30 seconds. This is
+not a suggestion, it is the single most common cause of "it stopped working"
+and it cost several hours of misdiagnosis here.
+
+---
+
 ## Restoring stock Android
 
 If you want Android back, or something went wrong:
@@ -405,7 +547,7 @@ needed. Run a throwaway 32-bit SPL over USB whose only job is to write a real
 64-bit U-Boot into the eMMC. After that the box boots from eMMC normally and
 the 32-bit build is never used again.
 
-That is what `patches/0002-fel-emmc-installer.patch` does.
+That is what `patches/0002-fel-emmc-tool.patch` does.
 
 ## Things that cost hours
 
@@ -496,17 +638,133 @@ reformatted:
 Everything between LBA 16 and LBA 73728 is unallocated, about 36 MiB, so the
 780 KiB bootloader fits with room to spare and no partition data is at risk.
 
+## How the WiFi was worked out
+
+There was no driver for this chip on mainline Linux, and the starting
+information was wrong. This is what it actually took, because the dead ends
+are as useful as the answer.
+
+**The chip is not what the device tree says.** Every image calls it
+`smartchip,s9083s`. The SDIO bus reports vendor `0x007a`, device `0x6011`.
+`0x007a` is AltoBeam. The stock Android `init.rc` confirms it: it loads
+`/vendor/modules/atbm613x_wifi_sdio.ko` from a source tree called
+`atbm6132bs`. The driver to use is
+[gtxaspec/atbm60xx](https://github.com/gtxaspec/atbm60xx), a CW1200 "Apollo"
+derivative. Trusting the device tree over the bus wasted hours.
+
+**The open-source driver's firmware does not run on this board.** The repo
+ships `svn14195`. It loads and the chip executes it, but the WSM startup
+handshake never completes, giving an endless `wsm_startup_done timeout` and
+firmware reload loop. The blob that works is the one from the box's own
+Android: `lmac 19040`, label `=MODEM==SDIO=-NoBle-`, built Dec 2023.
+Getting it out means unpacking the PhoenixSuit `IMAGEWTY` container, converting
+the Android sparse `super.fex`, finding the `vendor` ext4 inside it, and
+copying `/vendor/etc/firmware/ATBM_lite_fw_sdio.bin`. That is
+`scripts/extract-atbm-firmware.sh`.
+
+The WiFi+BT combo blob from the same directory does **not** work with this
+driver: it has a third section the driver never loads, so startup times out.
+Use the WiFi-only one.
+
+**Then it needed real fixes.** In order of discovery:
+
+| Fault | Symptom | Fix |
+|---|---|---|
+| Firmware retry loop unbounded | `modprobe` never returns, hangs forever | Bound to 2 attempts, return `-ETIMEDOUT` |
+| `BUG_ON(NumOfStations > 14)` | Kernel panic the moment the handshake succeeded | Clamp instead of panic. This firmware reports `Config[0]=0x08030408`, which the driver decodes as 1032 stations |
+| Driver writes `netdev->dev_addr` directly | `ip link set up` fails with `-EINVAL`, interface can never come up | `dev_addr_set()`. Linux 5.17+ keeps a shadow copy and `__dev_open()` refuses a mismatch |
+| Firmware header magic | Stock blob is `x654`, driver only accepts `w654` | Accept both |
+| 40 MHz on 2.4 GHz | Unstable, poor rates | Force HT20. Single-chain part, 40 MHz buys nothing |
+| Firmware power save | `wsm_power_mode_quiescent` sent at init | Set `wsm_power_mode_active`. Mains-powered box |
+| Beacon-loss threshold 20 | Firmware declared the AP lost after 2 s with the AP one metre away | Raised to 60 |
+| **`BSS_LOST` tore the link down instantly** | 35-70% packet loss | Debounced, see below |
+
+The last one was the real cause of the packet loss, and it is worth
+describing because the symptoms pointed everywhere except at it.
+
+With `CONFIG_TX_NO_CONFIRM` set, `WSM_EVENT_BSS_LOST` calls
+`ieee80211_connection_loss()` immediately: deauthenticate, scan all 14
+channels, reassociate. The verification path that should run first
+(`bss_loss_work`, and the whole `WSM_EVENT_BSS_REGAINED` case) is
+`#ifndef`'d out in that configuration, down to the struct fields. So one
+transient beacon miss destroyed a working link, with no possible recovery.
+Because this SSID had two access points, it then ping-ponged between them
+every 11 to 24 seconds. That is where the packets went.
+
+Do **not** "fix" this by turning `CONFIG_TX_NO_CONFIRM` off to get the proper
+path compiled in. That was tried. It enables `wsm_sync_channl_reset` and the
+BH suspend logic, which take a spinlock on invalid memory and panic the kernel
+during module init, leaving the box unbootable. The fix is the debounce, which
+keeps that code out of the picture.
+
+Things that looked like the cause and were not, each disproved by measurement:
+
+* **Power save at the mac80211 layer.** Removing `IEEE80211_HW_SUPPORTS_PS`
+  changed nothing, because the sleep was commanded a level lower.
+* **Block-ack / aggregation.** Setting `ampdu=0` collapsed the link to
+  1 Mbit/s and did not reduce loss. The repeated `ADDBA` requests were a
+  symptom, not a cause.
+* **Weak signal or a bad antenna.** Moving the box next to the router took
+  loss from 40% to 30%. A signal problem would have gone to near zero.
+* **The SDIO interrupt path.** `atbm_sdio_irq_period:Miss` appeared once in a
+  whole session. The RX poll period is 30 ms and could not produce the
+  observed 100 ms delays.
+
 ## Known issues
 
-* WiFi does not work. The SCI S9082H needs an out-of-tree driver.
+* **WiFi throughput is limited.** The link connects reliably, holds, and SSH
+  over it is dependable, but ICMP still shows packet loss and the transmit
+  rate sits low. TCP hides this well (SSH connected 6 times out of 6 in
+  testing, with handshakes between 0.4 s and 5.5 s). It is good enough for
+  SSH, package installs and general use, and it is not yet as fast as the
+  hardware should manage. The firmware's rate control pinning transmit at
+  1 Mbit/s is the remaining suspect and is not solved.
+* **The WiFi chip needs a cold power cycle.** See [the cold boot
+  rule](#the-cold-boot-rule). Never `rmmod` this driver.
 * No U-Boot console output. U-Boot has no HDMI driver on the H616, so the
-  screen stays black until the kernel starts. This is normal.
+  screen stays black until the kernel starts. This is normal, and it is also
+  why debugging boot problems needs `scripts/fel-emmc.py` rather than guesswork.
 * `BUG: Bad page state in process swapper` appears at `[0.000000]` on boot. It
   is harmless and the system runs fine afterwards.
-* `cfg80211: failed to load regulatory.db` is harmless, and moot until WiFi
-  works anyway.
+* `cfg80211: failed to load regulatory.db` is harmless. Install
+  `wireless-regdb` if you want it gone.
 * There is only one USB port, so use a hub if you want a keyboard and anything
   else at the same time.
+* `pacman -S` fails with 404 on a fresh image until you run `pacman -Syu`.
+
+---
+
+## Recovering a box that will not boot
+
+Nothing here can permanently brick the box. The BROM always offers FEL, and
+`scripts/fel-emmc.py` can read and write the eMMC with nothing else working:
+no bootloader, no kernel, no console.
+
+```bash
+# box in FEL mode, connected to the PC
+export FEL=/path/to/sunxi-fel
+./scripts/fel-emmc.py gpt                         # see the partition table
+./scripts/fel-emmc.py cat 7 /extlinux/extlinux.conf   # read the boot config
+```
+
+If a bad kernel module makes the box crash on boot, stop it loading by editing
+the kernel command line in place. The replacement must be the **same byte
+length** as the text it replaces, which is why the padding below matters:
+
+```bash
+./scripts/fel-emmc.py patch 7 /extlinux/extlinux.conf \
+  "console=tty0 systemd.mask=autoinstall-phase2.service" \
+  "console=tty0 module_blacklist=atbm603x_wifi_sdio    "
+```
+
+Use `module_blacklist=` (a kernel parameter, enforced inside `load_module()`),
+not `modprobe.blacklist=`. The latter only suppresses alias-based autoloading
+and is ignored when something loads the module explicitly by name, for example
+`systemd-modules-load` reading `/etc/modules-load.d/`.
+
+To reinstall U-Boot, see [Part 2](#part-2-install-u-boot-onto-the-box). To go
+back to Android entirely, see [Restoring stock
+Android](#restoring-stock-android).
 
 ---
 
@@ -515,16 +773,27 @@ Everything between LBA 16 and LBA 73728 is unallocated, about 36 MiB, so the
 ```
 patches/
   0001-apritzel-h616-32bit-build.patch   Andre Przywara's 32-bit build hack
-  0002-fel-emmc-installer.patch          FEL eMMC installer and DRAM size fix
+  0002-fel-emmc-tool.patch               FEL eMMC read/write SPL, DRAM size fix
+  0003-atbm60xx-w01-wifi.patch           WiFi driver: Linux 7.1 port + W01 fixes
 scripts/
   fel-install-uboot.sh                   installs U-Boot over FEL, main tool
-  build-installer-spl.sh                 build the 32-bit installer yourself
+  fel-emmc.py                            read/write eMMC over FEL, recovery tool
+  build-installer-spl.sh                 build the 32-bit FEL SPL yourself
   build-uboot-toc0.sh                    build the 64-bit TOC0 U-Boot yourself
+  build-atbm-driver.sh                   build the WiFi driver yourself
+  extract-atbm-firmware.sh               pull WiFi firmware from stock Android
+  install-wifi.sh                        installs WiFi on the box, runs there
+rootfs/
+  usr/local/bin/w01-wifi                 the `wifi` command
 emmc-install/
   install-to-emmc.sh                     USB to eMMC copy, runs on the box
   install-to-emmc.service                systemd unit for the above
 prebuilt/                                same binaries as the Releases page
 ```
+
+Releases carry the same things prebuilt: the U-Boot image, the FEL SPL, and
+`w01-wifi-<version>.tar.gz` containing the driver, the firmware, the offline
+`iw` and `wpa_supplicant` packages, and `install-wifi.sh`.
 
 ## Building from source
 
@@ -536,9 +805,77 @@ sudo apt install -y gcc-arm-linux-gnueabihf gcc-aarch64-linux-gnu bison flex \
     uuid-dev libgnutls28-dev pkg-config zlib1g-dev
 
 cd scripts
-./build-installer-spl.sh     # 32-bit FEL installer
+./build-installer-spl.sh     # 32-bit FEL SPL (eMMC read/write tool)
 ./build-uboot-toc0.sh        # 64-bit TOC0 U-Boot payload
 ```
+
+WiFi driver and firmware:
+
+```bash
+sudo apt install -y android-sdk-libsparse-utils python3
+
+# firmware, out of the stock Android image you downloaded for restoring
+./extract-atbm-firmware.sh 313_TX1_6031_20250513.img
+
+# driver, against the exact kernel that runs on the box
+KHDR=/path/to/usr/lib/modules/7.1.1/build ./build-atbm-driver.sh
+```
+
+The module is checked against `vermagic` at load time, so it must be built
+against the same kernel version that is running. For the MiniArch 7.1.1 image
+that means its headers package, not your PC's kernel.
+
+---
+
+## For AI assistants
+
+If you are an LLM helping someone with this board, read this section first. It
+is here because most of the time lost on this project went to acting on
+plausible assumptions instead of measurements.
+
+**Facts that are settled. Do not re-derive or contradict these:**
+
+* The WiFi chip is **AltoBeam ATBM6031**, SDIO `007a:6011`, chip id `6032i`.
+  It is *not* the `smartchip,s9083s` named in the device tree. Delete or
+  blacklist `s9083s` or it claims the device first.
+* The working firmware is the **stock Android** blob (`lmac 19040`,
+  `=MODEM==SDIO=-NoBle-`), not the one bundled with the atbm60xx driver
+  (`svn14195`), which never completes the WSM startup handshake. The WiFi+BT
+  combo blob does not work with this driver either.
+* The driver must be built with `CONFIG_ATBM_FUNC_NOTXCONFIRM=y`. Turning it
+  off to enable the CQM verification path **panics the kernel** in
+  `wsm_sync_channl_reset` during module init and makes the box unbootable.
+* The chip **only initialises from a cold power-on**. `rmmod`/`modprobe`
+  cycles and warm reboots leave it wedged and `mmc1` fails to enumerate it.
+  If an interface is missing, the first question is "was the power actually
+  pulled", not "what is wrong with the driver".
+* U-Boot on this board has **no console output at all** (no UART, no HDMI in
+  U-Boot). You cannot see whether a boot command ran. Do not reason about
+  U-Boot behaviour from kernel logs. Use `scripts/fel-emmc.py` to read the
+  eMMC directly.
+* `module_blacklist=` (kernel) stops a module loading. `modprobe.blacklist=`
+  does not, when something loads it by name, which
+  `/etc/modules-load.d/atbm.conf` does.
+
+**Method that worked, after several that did not:**
+
+1. Get a measurement before proposing a fix. Loss percentages, `iw` counters,
+   `ip -s link`, the actual dmesg. Symptom-matching produced four wrong
+   diagnoses in a row here (mac80211 power save, firmware power save,
+   block-ack, RF/antenna), each costing a reboot cycle.
+2. `iw dev <if> station dump` counters are **frozen** with
+   `CONFIG_TX_NO_CONFIRM`, because there is no TX status. Do not conclude
+   "zero errors" from them.
+3. Prefer one script that runs a whole battery unattended and writes a log,
+   over many interactive commands. On a box with one USB port you cannot have
+   a keyboard and a USB stick plugged in at once, so every interactive round
+   trip is expensive for the user.
+4. Change one thing at a time, and keep the last known-good `.ko` where the
+   user can restore it in one command.
+
+**Hardware constraints to respect:** one USB port, no SD slot, no SPI flash,
+no exposed UART, single 2.4 GHz WiFi chain. The user cannot "just add a serial
+console" and should not be asked to solder.
 
 ## Credits
 

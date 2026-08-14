@@ -26,7 +26,7 @@ cd "$WORK"
 cd u-boot
 
 git apply "$HERE/../patches/0001-apritzel-h616-32bit-build.patch"
-git apply "$HERE/../patches/0002-fel-emmc-installer.patch"
+git apply "$HERE/../patches/0002-fel-emmc-tool.patch"
 
 make tanix_tx1_defconfig
 ./scripts/config --disable TOOLS_MKEFICAPSULE

@@ -1,26 +1,8 @@
-Subject: [PATCH] sunxi: h616: FEL-mode eMMC bootloader installer (Wudung W01 / Tanix TX1)
-
-Applies on top of Andre Przywara's 32-bit build hack (patch 0001).
-
-1. Kconfig: CONFIG_SUNXI_DRAM_MAX_SIZE is 0x100000000 for the H616, but
-   in a 32-bit build phys_size_t is 32-bit so that truncates to 0, and
-   dram_init() then clamps gd->ram_size to zero. Add a 32-bit default.
-
-2. board.c: add an installer that runs on the FEL path and writes a
-   64-bit U-Boot payload from DRAM into the eMMC at the Allwinner boot
-   offset (LBA 16), with read-back verification. The 64-bit SPL cannot
-   return to the AArch32 FEL BROM, so a 32-bit SPL is used purely as a
-   vehicle to install a real 64-bit U-Boot into eMMC.
-
-Needs CONFIG_SPL_MMC_WRITE=y, otherwise mmc_bwrite() is a stub that
-silently returns 0 without touching hardware.
-
----
 diff --git a/arch/arm/mach-sunxi/Kconfig b/arch/arm/mach-sunxi/Kconfig
-index 575ca1d4..7188590f 100644
+index 17179593..7188590f 100644
 --- a/arch/arm/mach-sunxi/Kconfig
 +++ b/arch/arm/mach-sunxi/Kconfig
-@@ -262,6 +262,7 @@ config MACH_SUNXI_H3_H5
+@@ -262,10 +262,14 @@ config MACH_SUNXI_H3_H5
  # TODO: try out A80's 8GiB DRAM space
  config SUNXI_DRAM_MAX_SIZE
  	hex
@@ -28,11 +10,28 @@ index 575ca1d4..7188590f 100644
  	default 0x100000000 if MACH_SUN50I_H616
  	default 0xC0000000 if MACH_SUN50I || MACH_SUN50I_H5 || MACH_SUN50I_H6
  	default 0x80000000
+ 
++config SUNXI_ARMV8_32BIT_BUILD
++	bool "Build 32-bit binaries for ARMv8 SoCs"
++
+ choice
+ 	prompt "Sunxi SoC Variant"
+ 	optional
+@@ -452,7 +456,8 @@ config MACH_SUN50I_H6
+ 
+ config MACH_SUN50I_H616
+ 	bool "sun50i (Allwinner H616)"
+-	select ARM64
++	select ARM64 if !SUNXI_ARMV8_32BIT_BUILD
++	select CPU_V7A if SUNXI_ARMV8_32BIT_BUILD
+ 	select DRAM_SUN50I_H616
+ 	select SUN50I_GEN_H6
+ 	imply OF_UPSTREAM
 diff --git a/arch/arm/mach-sunxi/board.c b/arch/arm/mach-sunxi/board.c
-index 849e59c3..e1cb498a 100644
+index b1bf51f4..41f64b49 100644
 --- a/arch/arm/mach-sunxi/board.c
 +++ b/arch/arm/mach-sunxi/board.c
-@@ -203,9 +203,143 @@ static int gpio_init(void)
+@@ -203,9 +203,159 @@ static int gpio_init(void)
  	return 0;
  }
  
@@ -91,6 +90,8 @@ index 849e59c3..e1cb498a 100644
 +#define INST_SRC	0x50000000	/* DRAM: payload, uploaded by sunxi-fel */
 +#define INST_VERIFY	0x60000000	/* DRAM: read-back buffer */
 +#define INST_TARGET_LBA	16		/* 8 KiB: Allwinner BROM boot offset */
++#define INST_LBA	0x40104		/* host writes target LBA here */
++#define INST_MODE	0x40108		/* 0 = write+verify, 1 = read only */
 +#define INST_MAX_SECTORS 4096		/* 2 MiB ceiling, sanity limit only */
 +
 +static u32 inst_checksum(const void *buf, u32 len)
@@ -112,11 +113,16 @@ index 849e59c3..e1cb498a 100644
 +	struct blk_desc *desc;
 +	struct mmc *mmc;
 +	u32 nsectors;
++	u32 lba, mode;
 +	int ret;
 +
 +	writel(0xE33A1234, INST_STATUS + 0x00);
 +
 +	nsectors = readl(INST_NSECTORS);
++	lba  = readl(INST_LBA);
++	mode = readl(INST_MODE);
++	if (!lba)
++		lba = INST_TARGET_LBA;	/* keep the old behaviour */
 +	if (!nsectors || nsectors > INST_MAX_SECTORS)
 +		goto done;
 +
@@ -151,18 +157,27 @@ index 849e59c3..e1cb498a 100644
 +	if (mmc_switch_part(mmc, 0))
 +		goto done;
 +
-+	ret = desc->block_write(desc, INST_TARGET_LBA, nsectors,
-+				(void *)INST_SRC);
-+	writel((u32)ret, INST_STATUS + 0x10);
++	if (mode == 1) {
++		/* read-only: pull sectors into the verify buffer */
++		ret = desc->block_read(desc, lba, nsectors,
++				       (void *)INST_VERIFY);
++		writel((u32)ret, INST_STATUS + 0x14);
++		writel(inst_checksum((void *)INST_VERIFY, nsectors * 512),
++		       INST_STATUS + 0x1c);
++	} else {
++		ret = desc->block_write(desc, lba, nsectors,
++					(void *)INST_SRC);
++		writel((u32)ret, INST_STATUS + 0x10);
 +
-+	ret = desc->block_read(desc, INST_TARGET_LBA, nsectors,
-+			       (void *)INST_VERIFY);
-+	writel((u32)ret, INST_STATUS + 0x14);
++		ret = desc->block_read(desc, lba, nsectors,
++				       (void *)INST_VERIFY);
++		writel((u32)ret, INST_STATUS + 0x14);
 +
-+	writel(inst_checksum((void *)INST_SRC, nsectors * 512),
-+	       INST_STATUS + 0x18);
-+	writel(inst_checksum((void *)INST_VERIFY, nsectors * 512),
-+	       INST_STATUS + 0x1c);
++		writel(inst_checksum((void *)INST_SRC, nsectors * 512),
++		       INST_STATUS + 0x18);
++		writel(inst_checksum((void *)INST_VERIFY, nsectors * 512),
++		       INST_STATUS + 0x1c);
++	}
 +
 +done:
 +	writel(0xC0FFEEEE, INST_STATUS + 0x20);
@@ -176,3 +191,40 @@ index 849e59c3..e1cb498a 100644
  	debug("Returning to FEL sp=%x, lr=%x\n", fel_stash.sp, fel_stash.lr);
  	return_to_fel(fel_stash.sp, fel_stash.lr);
  
+@@ -467,8 +617,8 @@ void board_init_f(ulong dummy)
+ 	/* Enable non-secure access to some peripherals */
+ 	tzpc_init();
+ 
+-	clock_init();
+ 	timer_init();
++	clock_init();
+ 	gpio_init();
+ 
+ 	spl_init();
+diff --git a/board/sunxi/board.c b/board/sunxi/board.c
+index ac9cefc6..82fa285c 100644
+--- a/board/sunxi/board.c
++++ b/board/sunxi/board.c
+@@ -186,6 +186,8 @@ enum env_location env_get_location(enum env_operation op, int prio)
+ 	return ENVL_UNKNOWN;
+ }
+ 
++#define CONFIG_NON_SECURE
++
+ /* called only from U-Boot proper */
+ int board_init(void)
+ {
+diff --git a/configs/tanix_tx1_defconfig b/configs/tanix_tx1_defconfig
+index 1bd167ce..9ed3818d 100644
+--- a/configs/tanix_tx1_defconfig
++++ b/configs/tanix_tx1_defconfig
+@@ -1,7 +1,8 @@
+ CONFIG_ARM=y
+ CONFIG_ARCH_SUNXI=y
+-CONFIG_DEFAULT_DEVICE_TREE="allwinner/sun50i-h313-tanix-tx1"
++CONFIG_DEFAULT_DEVICE_TREE="../arm64/allwinner/sun50i-h313-tanix-tx1"
+ CONFIG_SPL=y
++CONFIG_SUNXI_ARMV8_32BIT_BUILD=y
+ CONFIG_DRAM_SUNXI_DX_ODT=0x06060606
+ CONFIG_DRAM_SUNXI_DX_DRI=0x0d0d0d0d
+ CONFIG_DRAM_SUNXI_CA_DRI=0x1919
