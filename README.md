@@ -959,6 +959,55 @@ wifi forget              remove the saved network
 See [Part 5 Step 6](#step-6-give-it-a-fixed-address-optional) for what
 `wifi static` writes.
 
+### If you get `wifi: command not found`
+
+The command is installed by `scripts/prepare-usb.sh`, so a box installed from
+a stick prepared with the current version of this repository already has it. A
+box installed from an earlier stick does not, and there is nothing on it to
+upgrade, because the command is not a package.
+
+Check first:
+
+```bash
+ls -l /usr/local/bin/w01-wifi /usr/local/bin/wifi
+```
+
+If either is missing, install it from this repository. On the box, with
+networking already up:
+
+```bash
+curl -fsSL -o /usr/local/bin/w01-wifi \
+  https://raw.githubusercontent.com/MultiX0/wudung-w01-linux/main/rootfs/usr/local/bin/w01-wifi
+chmod 755 /usr/local/bin/w01-wifi
+ln -sf w01-wifi /usr/local/bin/wifi
+```
+
+If the box has no network yet, copy `rootfs/usr/local/bin/w01-wifi` onto it
+over SSH from your PC instead:
+
+```bash
+scp rootfs/usr/local/bin/w01-wifi root@<box-ip>:/usr/local/bin/w01-wifi
+ssh root@<box-ip> 'chmod 755 /usr/local/bin/w01-wifi && ln -sf w01-wifi /usr/local/bin/wifi'
+```
+
+Then `wifi scan` works immediately. `/usr/local/bin` is on the default PATH in
+both login and non-login shells, so no relogin is needed.
+
+The shell aliases are separate and optional. They live in
+`/etc/profile.d/w01.sh` and only apply to login shells:
+
+```bash
+cat > /etc/profile.d/w01.sh <<'EOF'
+alias wifi='w01-wifi'
+alias wifi-scan='w01-wifi scan'
+alias myip="ip -4 -o addr show scope global | awk '{print \$2, \$4}'"
+EOF
+chmod 644 /etc/profile.d/w01.sh
+```
+
+The `wifi` symlink above is what actually makes the command work. The alias is
+only there so `myip` exists too.
+
 ## WiFi troubleshooting
 
 | Symptom | Cause and fix |

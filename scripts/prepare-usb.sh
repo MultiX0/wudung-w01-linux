@@ -242,6 +242,13 @@ MISSING=""
 [ -x "$MR/usr/bin/dhcpcd" ]          || MISSING="$MISSING dhcpcd"
 [ "$SSH_OK" = yes ]                  || MISSING="$MISSING openssh"
 
+# The README documents `wifi scan` and `wifi connect` as the way in, so a stick
+# that installs without them strands the user at a prompt where the documented
+# command does not exist. Check the symlink resolves, not just that a file is
+# there: `ln -sf` happily creates a link to nothing.
+[ -x "$MR/usr/local/bin/w01-wifi" ]  || MISSING="$MISSING w01-wifi"
+[ -x "$MR/usr/local/bin/wifi" ]      || MISSING="$MISSING wifi(symlink)"
+
 # Bail out BEFORE arming the eMMC installer. Otherwise a failed run still
 # leaves a stick that will happily install a WiFi-less system to the eMMC.
 if [ -n "$MISSING" ]; then
