@@ -325,8 +325,8 @@ file, exits successfully, and you find out only when the box refuses to boot.
 
 ```bash
 cd ~/w01
-curl -fLO https://github.com/warpme/miniarch/releases/download/172667447a9/MiniArch-15.2.0-06.06.2026-7.1.1-board-h313.tanix_tx1-SD-Image.img.xz
-unxz MiniArch-15.2.0-06.06.2026-7.1.1-board-h313.tanix_tx1-SD-Image.img.xz
+curl -fLO https://github.com/warpme/miniarch/releases/download/ec9fb5e724f/MiniArch-15.3.1-05.08.2026-7.2.3-board-h313.tanix_tx1-SD-Image.img.xz
+unxz MiniArch-15.3.1-05.08.2026-7.2.3-board-h313.tanix_tx1-SD-Image.img.xz
 ls -lh MiniArch-*.img
 ```
 
@@ -379,7 +379,7 @@ wrong disk destroys that disk. Check the letter before you press Enter, and
 use the whole drive (`/dev/sdg`), not a partition (`/dev/sdg1`):
 
 ```bash
-sudo dd if=MiniArch-15.2.0-06.06.2026-7.1.1-board-h313.tanix_tx1-SD-Image.img \
+sudo dd if=MiniArch-15.3.1-05.08.2026-7.2.3-board-h313.tanix_tx1-SD-Image.img \
         of=/dev/sdg bs=4M status=progress conv=fsync
 sync
 ```
