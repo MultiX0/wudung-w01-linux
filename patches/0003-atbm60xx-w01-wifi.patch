@@ -197,7 +197,7 @@ index f661dad..5ac3e3d 100644
  #include <net/ip.h>
  	 
 diff --git a/hal_apollo/mac80211/cfg.c b/hal_apollo/mac80211/cfg.c
-index b0b058d..0a2d1ce 100644
+index b0b058d..d18ae76 100644
 --- a/hal_apollo/mac80211/cfg.c
 +++ b/hal_apollo/mac80211/cfg.c
 @@ -26,6 +26,40 @@
@@ -483,6 +483,19 @@ index b0b058d..0a2d1ce 100644
  		u32 changed)
  {
  	struct ieee80211_local *local = wiphy_priv(wiphy);
+@@ -3276,7 +3357,11 @@ static int ieee80211_remain_on_channel(struct wiphy *wiphy,
+ 				       enum nl80211_channel_type channel_type,
+ 				       #endif
+ 				       unsigned int duration,
+-				       u64 *cookie)
++				       u64 *cookie
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(7, 2, 0))
++				       , const u8 *rx_addr
++#endif
++				       )
+ {
+ #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,6,0))
+ 	struct net_device *dev = wdev_to_ndev(wdev);
 diff --git a/hal_apollo/mac80211/ibss.c b/hal_apollo/mac80211/ibss.c
 index 3e2e035..bedf24f 100644
 --- a/hal_apollo/mac80211/ibss.c

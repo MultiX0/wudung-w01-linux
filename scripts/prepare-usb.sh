@@ -24,10 +24,14 @@ set -euo pipefail
 DEV="${1:-}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
-KVER="${KVER:-7.1.1}"
+# Not hardcoded: read from the image once it is mounted, below. MiniArch bumps
+# the kernel with every release and a stale default here would send the driver
+# into a /lib/modules directory that does not exist. Setting KVER in the
+# environment still overrides, for an image carrying more than one kernel.
+KVER="${KVER:-}"
 # Pinned, not /latest/download/: that resolves against the newest release,
-# so this URL would 404 the day a v1.2 is tagged.
-REL="https://github.com/MultiX0/wudung-w01-linux/releases/download/v1.1/w01-wifi-v1.1.tar.gz"
+# so this URL would 404 the day a v1.3 is tagged.
+REL="https://github.com/MultiX0/wudung-w01-linux/releases/download/v1.2/w01-wifi-v1.2.tar.gz"
 
 if [ -z "$DEV" ]; then
 	echo "usage: sudo $0 /dev/sdX      (the whole drive, not a partition)"
@@ -61,13 +65,39 @@ mount "$ROOTP" "$MR"
 # somebody's data drive that happened to be at the same letter
 [ -f "$MB/extlinux/extlinux.conf" ] || { echo "no extlinux.conf on $BOOTP - wrong device?"; exit 1; }
 [ -d "$MR/usr/lib" ] || { echo "no rootfs on $ROOTP - wrong device?"; exit 1; }
+# Which kernel does this image actually carry? Take it from the stick rather
+# than from a constant in this script: a kernel tree is a directory under
+# /lib/modules that has a kernel/ subdirectory in it, which rules out the
+# extramodules-<maj.min>-aarch64 directory sitting alongside it.
+if [ -n "$KVER" ]; then
+	echo "kernel $KVER (from KVER in the environment)"
+else
+	for d in "$MR"/lib/modules/*/; do
+		[ -d "${d}kernel" ] || continue
+		if [ -n "$KVER" ]; then
+			echo "this image carries more than one kernel:"
+			ls "$MR/lib/modules/"
+			echo
+			echo "Set KVER=<version> to choose, and make sure the WiFi bundle"
+			echo "holds a driver built for that same version."
+			exit 1
+		fi
+		KVER="$(basename "$d")"
+	done
+	[ -n "$KVER" ] || {
+		echo "no kernel found under $ROOTP:/lib/modules - wrong device?"
+		echo "Contents:"; ls "$MR/lib/modules/" 2>/dev/null
+		exit 1
+	}
+	echo "kernel $KVER (detected in the image)"
+fi
 [ -d "$MR/lib/modules/$KVER" ] || {
 	echo "the rootfs has no /lib/modules/$KVER."
 	echo "Kernel versions present:"; ls "$MR/lib/modules/" 2>/dev/null
 	echo
 	echo "Set KVER=<version> ONLY if you have also rebuilt the driver for that"
-	echo "kernel with scripts/build-atbm-driver.sh. The prebuilt one is built"
-	echo "for 7.1.1 and will not load on anything else."
+	echo "kernel with scripts/build-atbm-driver.sh. A module only loads into"
+	echo "the exact kernel it was built against."
 	exit 1
 }
 
@@ -99,11 +129,25 @@ echo "=== 3/5 driver and firmware ==="
 KO_VER=$(modinfo -F vermagic "$B/atbm603x_wifi_sdio.ko" 2>/dev/null | awk '{print $1}')
 if [ -n "$KO_VER" ] && [ "$KO_VER" != "$KVER" ]; then
 	echo "ERROR: the driver is built for kernel $KO_VER but this image runs $KVER."
-	echo "Rebuild it with scripts/build-atbm-driver.sh against $KVER headers."
+	echo "Rebuild it with scripts/build-atbm-driver.sh against $KVER headers,"
+	echo "then pass the new bundle with BUNDLE=/path/to/w01-wifi-*.tar.gz."
 	exit 1
 fi
-install -Dm644 "$B/atbm603x_wifi_sdio.ko" \
-	"$MR/lib/modules/$KVER/extramodules/atbm603x_wifi_sdio.ko"
+
+# /lib/modules/<ver>/extramodules is a symlink to ../extramodules-<maj.min>-aarch64
+# on this image. install -D follows it happily, but only while the target
+# exists: mkdir -p through a dangling symlink fails with "File exists", which
+# reads like a permissions problem rather than a missing directory. Create the
+# target first if the image ships the link without it.
+EXTRA="$MR/lib/modules/$KVER/extramodules"
+if [ -L "$EXTRA" ] && [ ! -d "$EXTRA" ]; then
+	T="$(readlink "$EXTRA")"
+	case "$T" in
+		/*) install -d "$MR$T" ;;                       # absolute, inside the target tree
+		*)  install -d "$(dirname "$EXTRA")/$T" ;;
+	esac
+fi
+install -Dm644 "$B/atbm603x_wifi_sdio.ko" "$EXTRA/atbm603x_wifi_sdio.ko"
 install -Dm644 "$B/atbm_fw.bin" "$MR/lib/firmware/atbm_fw.bin"
 
 # the wrong driver claims the same SDIO id, remove it wherever it lives
@@ -123,6 +167,18 @@ depmod -b "$MR" "$KVER" || {
 	echo
 	echo "ERROR: depmod failed. Without it the driver will not load on the box."
 	echo "Install kmod on this PC and re-run."
+	exit 1
+}
+# depmod exiting 0 is not proof that it indexed the module: it walks the tree
+# it is given, and extramodules is reached through a symlink. If the driver is
+# not in modules.dep, "modprobe atbm603x_wifi_sdio" at boot says "module not
+# found" and the box comes up with no WiFi and no way to fix it.
+grep -q 'atbm603x_wifi_sdio\.ko' "$MR/lib/modules/$KVER/modules.dep" || {
+	echo
+	echo "ERROR: depmod did not index the driver into modules.dep."
+	echo "It was installed as:"
+	echo "    /lib/modules/$KVER/extramodules/atbm603x_wifi_sdio.ko"
+	echo "modprobe would not find it at boot, so WiFi would not come up."
 	exit 1
 }
 

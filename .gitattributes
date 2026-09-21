@@ -12,7 +12,7 @@
 LICENSE   text eol=lf
 
 # Patches must be stored byte for byte. 0003 patches driver sources that are
-# CRLF upstream, so 704 of its context lines end in CR. Normalising those to
+# CRLF upstream, so 716 of its context lines end in CR. Normalising those to
 # LF makes the context stop matching and "git apply" fails with "patch does
 # not apply" for everyone who clones, while still looking fine on the machine
 # that generated it.

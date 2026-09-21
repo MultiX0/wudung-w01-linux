@@ -10,7 +10,7 @@
 
 <p align="center">
   <img alt="SoC" src="https://img.shields.io/badge/SoC-Allwinner%20H313-informational">
-  <img alt="kernel" src="https://img.shields.io/badge/kernel-7.1.1-blue">
+  <img alt="kernel" src="https://img.shields.io/badge/kernel-7.2.3-blue">
   <img alt="wifi" src="https://img.shields.io/badge/WiFi-working-success">
   <img alt="licence" src="https://img.shields.io/badge/licence-GPL--2.0-lightgrey">
 </p>
@@ -121,7 +121,7 @@ rather than after.
   * [Things that cost hours](#things-that-cost-hours)
   * [Layout](#layout)
   * [How the WiFi was worked out](#how-the-wifi-was-worked-out)
-    * [Porting a 4.9 driver to Linux 7.1](#porting-a-49-driver-to-linux-71)
+    * [Porting a 4.9 driver to Linux 7.2](#porting-a-49-driver-to-linux-72)
   * [Known issues](#known-issues)
   * [Recovering a box that will not boot](#recovering-a-box-that-will-not-boot)
   * [Repository contents](#repository-contents)
@@ -338,13 +338,18 @@ link is dead, take the newest `board-h313.tanix_tx1` asset from the
 [MiniArch releases page](https://github.com/warpme/miniarch/releases). Pick
 `tanix_tx1`, not one of the `x96_q` variants.
 
-**If you use a newer image, the prebuilt WiFi driver will not load.** Kernel
-modules are checked against the exact kernel version at load time, and the one
-in the release is built for 7.1.1. A newer image installs fine and then has no
-WiFi, which you cannot fix from the box because it has no network. Either stay
-on the pinned image, or rebuild the driver for your kernel with
+**If you use a different image, the prebuilt WiFi driver will not load.**
+Kernel modules are checked against the exact kernel version at load time, and
+the one in release v1.2 is built for 7.2.3, which is what the image above
+carries. Another image installs fine and then has no WiFi, which you cannot fix
+from the box because it has no network. Either stay on the pinned image, or
+rebuild the driver for your kernel with
 [`build-atbm-driver.sh`](#building-from-source) and put the result in the
 bundle before running `prepare-usb.sh`.
+
+`prepare-usb.sh` reads the kernel version off the stick and refuses to run if
+the driver in the bundle does not match it, so a mismatch stops on the PC
+rather than on the box.
 
 ## Step 2. Write it to the USB flash drive
 
@@ -420,7 +425,7 @@ downloads the WiFi bundle from the Releases page automatically; if you have
 no internet on this PC, download `w01-wifi-*.tar.gz` yourself and pass it:
 
 ```bash
-sudo BUNDLE=~/Downloads/w01-wifi-v1.1.tar.gz ./prepare-usb.sh /dev/sdg
+sudo BUNDLE=~/Downloads/w01-wifi-v1.2.tar.gz ./prepare-usb.sh /dev/sdg
 ```
 
 It refuses to touch a drive that does not look like the MiniArch image, and
@@ -472,7 +477,7 @@ needed again.
 Power the box on. When it reaches:
 
 ```
-Arch Linux ARM 7.1.1 (tty1)
+Arch Linux ARM 7.2.3 (tty1)
 alarm login:
 ```
 
@@ -726,7 +731,7 @@ way in. Recovering from that needs a USB keyboard and a screen.
 MiniArch already guards this: `/etc/pacman.conf` ships with
 
 ```
-IgnorePkg = linux-aarch64 linux-aarch64-api-headers ... linux-firmware
+IgnorePkg = linux-aarch64 linux-aarch64-headers linux-aarch64-api-headers linux-headers linux-api-headers linux-firmware linux-firmware-*
 ```
 
 so `pacman -Syu` skips the kernel and prints `skipping package linux-aarch64`.
@@ -1284,7 +1289,7 @@ BH suspend logic, which take a spinlock on invalid memory and panic the kernel
 during module init, leaving the box unbootable. The fix is the debounce, which
 keeps that code out of the picture.
 
-### Porting a 4.9 driver to Linux 7.1
+### Porting a 4.9 driver to Linux 7.2
 
 Most of `patches/0003` is not the W01 fixes above, it is this. The driver was
 written for Linux 4.9 and carries its own copy of mac80211, so both had to be
@@ -1301,6 +1306,17 @@ kernel, because the same kind of breakage will happen again:
 | `station_parameters` | `link_sta_params` | station parameters are per-link now |
 | `prandom_u32()` | `get_random_u32()` | removed |
 | `asm/unaligned.h` | `linux/unaligned.h` | header moved |
+| `remain_on_channel()` with 5 arguments | a trailing `const u8 *rx_addr` | 7.2 only; see below |
+
+Going from 7.1.1 to 7.2.3 cost exactly one of these. `cfg80211_ops`
+`->remain_on_channel` gained a sixth argument, `const u8 *rx_addr`, so the
+driver's own `ieee80211_remain_on_channel` no longer matched the function
+pointer it is assigned to and the build stopped with `initialization of ... from
+incompatible pointer type`. The driver does not use the new argument, so the
+fix is to accept and ignore it, behind
+`#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 2, 0)` so the same patch still
+builds on 7.1. Everything else in the table was already written with open-ended
+`>=` guards and carried over untouched.
 
 And one genuine upstream bug, which is not a kernel change at all. The
 driver's `Makefile` reads its own `.config` through `$(src)`, but `$(src)` is
@@ -1399,7 +1415,7 @@ Android](#restoring-stock-android).
 patches/
   0001-apritzel-h616-32bit-build.patch   Andre Przywara's 32-bit build hack
   0002-fel-emmc-tool.patch               FEL eMMC read/write SPL, DRAM size fix
-  0003-atbm60xx-w01-wifi.patch           WiFi driver: Linux 7.1 port + W01 fixes
+  0003-atbm60xx-w01-wifi.patch           WiFi driver: Linux 7.2 port + W01 fixes
 scripts/
   prepare-usb.sh                         injects everything into the USB stick
   fel-install-uboot.sh                   installs U-Boot over FEL, main tool
@@ -1446,13 +1462,41 @@ sudo apt install -y android-sdk-libsparse-utils python3
 # inside is a single large .img, named for the board and build date.
 ./extract-atbm-firmware.sh <the .img from the stock firmware archive>
 
-# driver, against the exact kernel that runs on the box
-KHDR=/path/to/usr/lib/modules/7.1.1/build ./build-atbm-driver.sh
+# driver, against the exact kernel that runs on the box.
+# The headers are not a release asset: MiniArch keeps its kernel packages in
+# the root of its git repo, which is the [miniarch] pacman repo the image
+# itself uses (/etc/pacman-miniarch.conf on the box).
+curl -fLO https://github.com/warpme/miniarch/raw/refs/heads/master/linux-aarch64-headers-7.2.3-1-any.pkg.tar.gz
+mkdir khdr && tar xf linux-aarch64-headers-7.2.3-1-any.pkg.tar.gz -C khdr
+KHDR=$PWD/khdr/usr/lib/modules/7.2.3/build ./build-atbm-driver.sh
 ```
 
 The module is checked against `vermagic` at load time, so it must be built
-against the same kernel version that is running. For the MiniArch 7.1.1 image
-that means its headers package, not your PC's kernel.
+against the same kernel version that is running. For the MiniArch 7.2.3 image
+that means its headers package, not your PC's kernel. `build-atbm-driver.sh`
+compares the built module's `vermagic` against the headers and fails if they
+disagree, so a wrong `KHDR` stops here rather than on the box.
+
+**Build host requirements for 7.2.3.** Two of these bite, and neither failure
+looks like what it is, so the script checks both before it starts:
+
+* **aarch64 gcc 14 or newer.** The 7.2 build passes
+  `-fmin-function-alignment`, which gcc 13 rejects with `unrecognized
+  command-line option`. Ubuntu 24.04 ships gcc 13 as the default cross
+  compiler, so install 14 alongside it:
+
+  ```bash
+  sudo apt install gcc-14-aarch64-linux-gnu
+  sudo ln -sf /usr/bin/aarch64-linux-gnu-gcc-14 /usr/local/bin/aarch64-linux-gnu-gcc
+  ```
+
+* **GNU make 4.3 or older.** make 4.4 applies the `export` directive to
+  `$(shell ...)` as well, and the upstream atbm `Makefile` has a bare `export`
+  next to a dozen `?= $(shell echo ...)` variables. On make 4.4 the build
+  forks shells forever: no output, no object files, one core pinned, and
+  nothing that says why. Debian 12 and Ubuntu 24.04 both ship make 4.3.
+
+A verified combination is Ubuntu 24.04 with `gcc-14-aarch64-linux-gnu`.
 
 ---
 
@@ -1487,6 +1531,23 @@ plausible assumptions instead of measurements.
 * `module_blacklist=` (kernel) stops a module loading. `modprobe.blacklist=`
   does not, when something loads it by name, which
   `/etc/modules-load.d/atbm.conf` does.
+* MiniArch 15.3.1 (kernel 7.2.3) **no longer ships `s9083s`** at all: nothing
+  in its `modules.alias` claims SDIO `007a:6011`. The delete and the blacklist
+  in `prepare-usb.sh` and `install-wifi.sh` are now no-ops on a stock image.
+  They are kept deliberately, because they still matter for a box installed
+  from an older image and for any image that brings the driver back.
+* The kernel still does **not** build `CONFIG_NF_TABLES_IPV4` in 7.2.3, while
+  `IP_NF_IPTABLES` and `IP_NF_FILTER` are modules. The `w01-iptables-legacy`
+  workaround is therefore still required; do not remove it as obsolete.
+* `/lib/modules/<ver>/extramodules` is a **symlink** to
+  `../extramodules-<maj.min>-aarch64`. Install through the link, and do not
+  assume `mkdir -p` on it works: it fails with `File exists` if the target is
+  missing.
+* Building for 7.2 needs **aarch64 gcc 14 or newer** and **GNU make 4.3 or
+  older**. gcc 13 cannot parse `-fmin-function-alignment`; make 4.4 turns the
+  upstream atbm `Makefile` into a fork bomb that produces no output at all.
+  If a build appears to hang with one core pinned and an empty log, it is
+  make 4.4, not the driver.
 
 **Method that worked, after several that did not:**
 

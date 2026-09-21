@@ -24,6 +24,30 @@ echo "kernel: $KVER"
 [ -f "$HERE/atbm603x_wifi_sdio.ko" ] || { echo "missing atbm603x_wifi_sdio.ko"; exit 1; }
 [ -f "$HERE/atbm_fw.bin" ]           || { echo "missing atbm_fw.bin"; exit 1; }
 
+# A module only loads into the kernel it was built for, and neither install nor
+# depmod checks. Without this the install reports success and the box has no
+# WiFi, with nothing but the error in dmesg to say why.
+KO_VER=$(modinfo -F vermagic "$HERE/atbm603x_wifi_sdio.ko" 2>/dev/null | awk '{print $1}')
+if [ -n "$KO_VER" ] && [ "$KO_VER" != "$KVER" ]; then
+    echo
+    echo "ERROR: this bundle's driver is built for kernel $KO_VER,"
+    echo "       but this box is running $KVER."
+    echo
+    echo "Use the bundle that matches, or rebuild the driver against $KVER"
+    echo "with scripts/build-atbm-driver.sh. Nothing has been changed."
+    exit 1
+fi
+
+# extramodules is a symlink to ../extramodules-<maj.min>-aarch64 on this image.
+# mkdir -p through a dangling symlink fails with "File exists", so create the
+# target rather than the link.
+if [ -L "$EXTRA" ] && [ ! -d "$EXTRA" ]; then
+    T=$(readlink "$EXTRA")
+    case "$T" in
+        /*) mkdir -p "$T" ;;
+        *)  mkdir -p "$(dirname "$EXTRA")/$T" ;;
+    esac
+fi
 mkdir -p "$EXTRA" /lib/firmware
 install -m 644 "$HERE/atbm603x_wifi_sdio.ko" "$EXTRA/atbm603x_wifi_sdio.ko"
 install -m 644 "$HERE/atbm_fw.bin"           /lib/firmware/atbm_fw.bin
@@ -37,6 +61,15 @@ mkdir -p /etc/modprobe.d
 echo "blacklist s9083s" > /etc/modprobe.d/blacklist-s9083s.conf
 
 depmod -a
+# depmod exiting 0 does not mean it indexed our module; if it did not, the
+# modules-load.d entry below fails at every boot with "module not found".
+grep -q 'atbm603x_wifi_sdio\.ko' "/lib/modules/$KVER/modules.dep" || {
+    echo
+    echo "ERROR: depmod did not index the driver into modules.dep."
+    echo "It would not load at boot. Installed as:"
+    echo "    $EXTRA/atbm603x_wifi_sdio.ko"
+    exit 1
+}
 
 # load at every boot
 mkdir -p /etc/modules-load.d
